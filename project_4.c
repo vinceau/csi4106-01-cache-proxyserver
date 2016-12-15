@@ -1,7 +1,7 @@
 /*
- * project_3 -- a simple proxy server
+ * project_4 -- cache proxy server
  *
- * The third project of the 2016 Fall Semester course
+ * The fourth and final project of the 2016 Fall Semester course
  * CSI4106-01: Computer Networks at Yonsei University.
  *
  * Author: Vincent Au (2016840200)
@@ -182,44 +182,56 @@ falsify(char *string, int nbytes, int *status)
 int
 connect_host(char *hostname)
 {
-	struct hostent *he;
-	struct in_addr **addr_list;
-	struct sockaddr_in server;
+	//printf("Attempting to connect to: %s\n", hostname);
 
-	int sockfd;
-	if ((sockfd = socket(AF_INET, SOCK_STREAM, 0)) == -1) {
-		perror("couldn't open socket");
-		exit(1);
-	}
-
-	if ((he = gethostbyname(hostname)) == NULL) {
-		perror("Couldn't call gethostbyname()");
-		exit(1);
-	}
-
+	struct addrinfo hints, *res, *res0;
+	int error;
+	int s;
 	int yes = 1;
-	//allow port reuse
-	if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) == -1) {
-		perror("ERROR: setsockopt() failed");
-		exit(1);
-	}
-	//don't crash when writing to closed socket
-	if (setsockopt(sockfd, SOL_SOCKET, SO_NOSIGPIPE, &yes, sizeof(yes)) == -1) {
-		perror("ERROR: setsockopt() failed");
-		exit(1);
-	}
 
-	addr_list = (struct in_addr **) he->h_addr_list;
-	memcpy(&server.sin_addr, he->h_addr_list[0], he->h_length);
-	server.sin_family = AF_INET;
-	server.sin_port = htons(80);
+	memset(&hints, 0, sizeof(hints));
+	hints.ai_family = PF_UNSPEC;
+	hints.ai_socktype = SOCK_STREAM;
 
-	if (connect(sockfd, (struct sockaddr *)&server, sizeof(server))) {
-		perror("Couldn't connect socket to client");
+	if ((error = getaddrinfo(hostname, "80", &hints, &res0)) != 0) {
+		fprintf(stderr, "getaddrinfo error: %s\n", gai_strerror(error));
 		exit(1);
 	}
 
-	return sockfd;
+	for (res = res0; res; res = res->ai_next) {
+		s = socket(res->ai_family, res->ai_socktype,
+				res->ai_protocol);
+		if (s == -1) {
+			perror("ERROR: socket() failed");
+			continue;
+		}
+
+		//allow port reuse
+		if (setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) == -1) {
+			perror("ERROR: setsockopt() failed");
+			exit(1);
+		}
+		//don't crash when writing to closed socket
+		if (setsockopt(s, SOL_SOCKET, SO_NOSIGPIPE, &yes, sizeof(yes)) == -1) {
+			perror("ERROR: setsockopt() failed");
+			exit(1);
+		}
+
+		if (connect(s, res->ai_addr, res->ai_addrlen) < 0) {
+			perror("ERROR: connect() failed");
+			close(s);
+			continue;
+		}
+
+		break;  /* okay we got one */
+	}
+	if (s < 0) {
+		fprintf(stderr, "Couldn't connect to the host: %s\n", hostname);
+		exit(1);
+	}
+	freeaddrinfo(res0);
+
+	return s;
 }
 
 /*
