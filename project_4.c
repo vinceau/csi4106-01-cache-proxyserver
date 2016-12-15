@@ -536,15 +536,33 @@ int
 main(int argc, char **argv)
 {
 	//make sure we have the right number of arguments
-	if (argc != 2) {
+	if (argc < 4) {
 		//remember: the name of the program is the first argument
 		fprintf(stderr, "ERROR: Missing required arguments!\n");
-		printf("Usage: %s <port>\n", argv[0]);
-		printf("e.g. %s 9001\n", argv[0]);
+		printf("Usage: %s <port> <maxConn> <maxSize>\n", argv[0]);
+		printf("e.g. %s 9001 20 16\n", argv[0]);
 		exit(1);
 	}
 
 	char *port = argv[1]; //port we're listening on
+	int max_conn = atol(argv[2]); //max no. connections
+	int max_size = atol(argv[3]); //max cache size
+
+	int opt_comp = 0; //compression enabled
+	int opt_chunk = 0; //chunking enabled
+	int opt_pc = 0; //persistant connection enabled
+	
+	//check for optional arguments
+	for (int i = 4; i < argc; i++) {
+		if (strcmp(argv[i], "-comp") == 0) {
+			opt_comp = 1;
+		} else if (strcmp(argv[i], "-chunk") == 0) {
+			opt_chunk = 1;
+		} else if (strcmp(argv[i], "-pc") == 0) {
+			opt_pc = 1;
+		}
+	}
+
 	int listener; //file descriptor of listening socket
 	struct sockaddr_storage their_addr; //connector's address info
 	socklen_t sin_size;
