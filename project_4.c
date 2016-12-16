@@ -46,6 +46,14 @@ struct thread_params {
 	char portstr[NI_MAXSERV]; //readable client port
 };
 
+struct options {
+	int max_conn;
+	int max_size;
+	int comp_enabled;
+	int chunk_enabled;
+	int pc_enabled;
+};
+
 int
 connect_host(char *hostname);
 
@@ -69,11 +77,11 @@ setup_server(int *listener, char *port);
 
 
 const char *ERROR_MSG = "HTTP/1.1 403 Forbidden\r\n\r\n";
-int MAX_CONN; //number of maximum concurrent connections
-int MAX_CACHE; //maximum size of cache in MB
 
 int count = 0; //total number of requests
 int thread_count = 0; //total number of running threads
+struct options opt;
+
 sem_t mutex; //semaphore for mutual exclusion
 
 
@@ -294,7 +302,7 @@ handle_request(struct request req, struct thread_params *p)
 	sem_wait(&mutex);
 	printf("-----------------------------------------------\n");
 	printf("%d [Conn: %d/%d] [Cache: X/%dMB] [Items: X]\n\n",
-			++count, thread_count, MAX_CONN, MAX_CACHE);
+			++count, thread_count, opt.max_conn, opt.max_size);
 	printf("[CLI connected to %s:%s]\n", p->hoststr, p->portstr);
 	printf("[CLI ==> PRX --- SRV]\n");
 	printf("> GET %s%s\n", req.host, req.path);
@@ -469,21 +477,21 @@ main(int argc, char **argv)
 	}
 
 	char *port = argv[1]; //port we're listening on
-	MAX_CONN = atol(argv[2]); //max no. connections
-	MAX_CACHE = atol(argv[3]); //max cache size
+	opt.max_conn = atol(argv[2]); //max no. connections
+	opt.max_size = atol(argv[3]); //max cache size
 
-	int opt_comp = 0; //compression enabled
-	int opt_chunk = 0; //chunking enabled
-	int opt_pc = 0; //persistant connection enabled
+	opt.comp_enabled = 0; //compression enabled
+	opt.chunk_enabled = 0; //chunking enabled
+	opt.pc_enabled = 0; //persistant connection enabled
 
 	//check for optional arguments
 	for (int i = 4; i < argc; i++) {
 		if (strcmp(argv[i], "-comp") == 0) {
-			opt_comp = 1;
+			opt.comp_enabled = 1;
 		} else if (strcmp(argv[i], "-chunk") == 0) {
-			opt_chunk = 1;
+			opt.chunk_enabled = 1;
 		} else if (strcmp(argv[i], "-pc") == 0) {
-			opt_pc = 1;
+			opt.pc_enabled = 1;
 		}
 	}
 
@@ -497,7 +505,7 @@ main(int argc, char **argv)
 
 	printf("Starting proxy server on port %s\n", port);
 
-	sem_init(&mutex, 0, 0);
+	sem_init(&mutex, 0, 1);
 
 	while(1) {
 		sin_size = sizeof(their_addr);
@@ -509,7 +517,11 @@ main(int argc, char **argv)
 		}
 
 		//don't create a new thread if we already have too many running
-		while (MAX_CONN > 0 && thread_count >= MAX_CONN);
+		while (opt.max_conn > 0) {
+			sem_wait(&mutex);
+			if (thread_count < opt.max_conn) break;
+			sem_post(&mutex);
+		}
 
 		pthread_t thread_id;
 		struct thread_params *params = malloc(sizeof(struct thread_params));
@@ -520,11 +532,11 @@ main(int argc, char **argv)
 				sizeof(params->hoststr), params->portstr, sizeof(params->portstr),
 				NI_NUMERICHOST | NI_NUMERICSERV);
 
-		pthread_create(&thread_id, NULL, &thread_main, (void*) params);
-
 		sem_wait(&mutex);
 		thread_count++;
 		sem_post(&mutex);
+		pthread_create(&thread_id, NULL, &thread_main, (void*) params);
+
 	}
 	close(listener);
 	return 0;
