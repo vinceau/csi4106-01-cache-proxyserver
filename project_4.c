@@ -10,6 +10,7 @@
 #define _GNU_SOURCE
 
 #include <pthread.h>
+#include <semaphore.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -67,15 +68,19 @@ void
 setup_server(int *listener, char *port);
 
 
-static int count = 1;
-
 const char *ERROR_MSG = "HTTP/1.1 403 Forbidden\r\n\r\n";
+int MAX_CONN; //number of maximum concurrent connections
+int MAX_CACHE; //maximum size of cache in MB
+
+int count = 0; //total number of requests
+int thread_count = 0; //total number of running threads
+sem_t mutex; //semaphore for mutual exclusion
 
 
 void*
 thread_main(void *params)
 {
-	/* Cast the pointer to the correct type.  */ 
+	/* Cast the pointer to the correct type. */ 
     struct thread_params *p = (struct thread_params*) params; 
 	pthread_detach(pthread_self());
 
@@ -96,8 +101,9 @@ thread_main(void *params)
 		}
 	}
 
-	//printf("thread terminated\n");
-	pthread_exit(NULL);
+	sem_wait(&mutex);
+	thread_count--;
+	sem_post(&mutex);
 	return NULL;
 }
 
@@ -285,11 +291,15 @@ send_request(int servconn, struct request req)
 void
 handle_request(struct request req, struct thread_params *p)
 {
+	sem_wait(&mutex);
 	printf("-----------------------------------------------\n");
+	printf("%d [Conn: %d/%d] [Cache: X/%dMB] [Items: X]\n\n",
+			++count, thread_count, MAX_CONN, MAX_CACHE);
 	printf("[CLI connected to %s:%s]\n", p->hoststr, p->portstr);
 	printf("[CLI ==> PRX --- SRV]\n");
 	printf("> GET %s%s\n", req.host, req.path);
 	printf("> %s\n", req.useragent);
+	sem_post(&mutex);
 
 	char *host = req.host;
 	int servconn = connect_host(host);
@@ -459,15 +469,13 @@ main(int argc, char **argv)
 	}
 
 	char *port = argv[1]; //port we're listening on
-	int max_conn = atol(argv[2]); //max no. connections
-	int max_size = atol(argv[3]); //max cache size
+	MAX_CONN = atol(argv[2]); //max no. connections
+	MAX_CACHE = atol(argv[3]); //max cache size
 
 	int opt_comp = 0; //compression enabled
 	int opt_chunk = 0; //chunking enabled
 	int opt_pc = 0; //persistant connection enabled
 
-	int connfd;
-	
 	//check for optional arguments
 	for (int i = 4; i < argc; i++) {
 		if (strcmp(argv[i], "-comp") == 0) {
@@ -479,6 +487,7 @@ main(int argc, char **argv)
 		}
 	}
 
+	int connfd;
 	int listener; //file descriptor of listening socket
 	struct sockaddr_storage their_addr; //connector's address info
 	socklen_t sin_size;
@@ -488,6 +497,8 @@ main(int argc, char **argv)
 
 	printf("Starting proxy server on port %s\n", port);
 
+	sem_init(&mutex, 0, 0);
+
 	while(1) {
 		sin_size = sizeof(their_addr);
 		connfd = accept(listener, (struct sockaddr *) &their_addr,
@@ -496,6 +507,9 @@ main(int argc, char **argv)
 			perror("ERROR: accept() failed");
 			continue;
 		}
+
+		//don't create a new thread if we already have too many running
+		while (MAX_CONN > 0 && thread_count >= MAX_CONN);
 
 		pthread_t thread_id;
 		struct thread_params *params = malloc(sizeof(struct thread_params));
@@ -508,6 +522,9 @@ main(int argc, char **argv)
 
 		pthread_create(&thread_id, NULL, &thread_main, (void*) params);
 
+		sem_wait(&mutex);
+		thread_count++;
+		sem_post(&mutex);
 	}
 	close(listener);
 	return 0;
