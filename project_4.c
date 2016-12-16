@@ -38,22 +38,6 @@ struct response {
 	int has_length;
 };
 
-struct modes {
-	int is_mobile;
-	int is_falsify;
-	int is_redirect;
-	char red_host[2048];
-	char red_path[2048];
-	char colour[6];
-};
-
-
-void
-check_modes(char *path);
-
-int
-falsify(char *string, int nbytes, int *result);
-
 int
 connect_host(char *hostname);
 
@@ -79,102 +63,12 @@ setup_server(int *listener, char *port);
 static int count = 1;
 struct request req; //latest request info
 struct response res; //latest response info
-struct modes m; //current mode settings
 
 int connfd; //socket of the connected client
 char hoststr[NI_MAXHOST]; //readable client address
 char portstr[NI_MAXSERV]; //readable client port
 
-char *MOBILE_UA = "Mozilla/5.0 (Linux; Android 5.1.1; Nexus 5 Build/LMY48B; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/43.0.2357.65 Mobile Safari/537.36";
 char *ERROR_MSG = "HTTP/1.1 403 Forbidden\r\n\r\n";
-
-
-/*
- * Reads <path> and determines the changing of modes if any. Only works with
- * one mode change at a time.
- * Note: <path> is modified to remove the mode option from the path once
- * complete.
- */
-void
-check_modes(char *path)
-{
-	char *ptr;
-	char temp[2048];
-	ptr = strchr(path, '?');
-	if (ptr != NULL) {
-		ptr += 1;
-		if (strcmp(ptr, "start_mobile") == 0) {
-			m.is_mobile = 1;
-		} else if (strcmp(ptr, "stop_mobile") == 0) {
-			m.is_mobile = 0;
-		} else if (strcmp(ptr, "stop_redirect") == 0) {
-			m.is_redirect = 0;
-		} else if (strcmp(ptr, "stop_falsify") == 0) {
-			m.is_falsify = 0;
-		} else if (sscanf(ptr, "start_redirect=%s", temp) == 1) {
-			strncpy(m.red_host, temp, sizeof(m.red_host));
-			m.is_redirect = 1;
-			//printf("Will now redirect to: %s\n", m.red_host);
-		} else if (sscanf(ptr, "start_falsify=%s", temp) == 1) {
-			strncpy(m.colour, temp, sizeof(m.colour));
-			m.is_falsify = 1;
-			//printf("Will now set all colour to: %s\n", temp);
-		} else {
-			//none of the options were achieved so just exit
-			return;
-		}
-		//remove the mode changing from the actual url
-		*(ptr-1) = '\0';
-	}
-}
-
-/*
- * Writes <nbytes> bytes of data from <string> to connfd.
- *
- * If the deferenced value of <status> is false and the type of the HTTP
- * response in <string> is HTML, attempts at falsification will occur where it
- * looks through <string> to find the body tag and adds the style attribute
- * to it, changing the background colour to whatever is set in the global
- * mode.color attribute. If the body tag is found, true is written to <status>.
- *
- * Returns the number of bytes that were successfully written to connfd.
- */
-int
-falsify(char *string, int nbytes, int *status)
-{
-	//if it's already falsified, or it's not a html document just write it
-	if (*status || (!*status && strstr(res.c_type, "text/html") == NULL)) {
-		return write(connfd, string, nbytes);
-	}
-
-	int find_body = 0;
-	int i = 0;
-	int bytes_sent = 0;
-	char *ptr = string;
-	for (; i < nbytes - 4; i++) {
-		if (strncmp(ptr, "<body", 5) == 0) {
-			find_body = 1;
-			break;
-		}
-		ptr++;
-	}
-	if (!find_body) { //we reached the end without finding <body
-		*status = 0; //not found
-		return write(connfd, string, nbytes);
-	}
-	//we found "<body " so send up til that point
-	bytes_sent += write(connfd, string, i+5);
-
-	//send the style part
-	char style[64];
-	snprintf(style, sizeof(style), " style=\"background-color: #%s\"", m.colour);
-	bytes_sent += write(connfd, style, strlen(style));
-
-	//mark status as successful and send the rest
-	*status = 1;
-	bytes_sent += write(connfd, ptr, strlen(ptr+5));
-	return bytes_sent;
-}
 
 /*
  * Returns a new socket having connected to <hostname> on port 80
@@ -334,14 +228,9 @@ ssize_t
 send_request(int servconn)
 {
 	char request[2048];
-	char *ua = (m.is_mobile) ? MOBILE_UA : req.useragent;
+	char *ua = req.useragent;
 	char *host = req.host;
 	char *path = req.path;
-
-	if (m.is_redirect && strstr(req.host, m.red_host) == NULL) {
-		host = m.red_host;
-		path = "/";
-	}
 
 	snprintf(request, sizeof(request),
 			"GET %s HTTP/1.0\r\n"
@@ -365,11 +254,6 @@ void
 handle_request()
 {
 	printf("-----------------------------------------------\n");
-	printf("%d [%s] Redirection [%s] Mobile [%s] Falsification\n", count++,
-			m.is_redirect ? "O" : "X",
-			m.is_mobile ? "O" : "X",
-			m.is_falsify ? "O" : "X"
-			);
 
 	printf("[CLI connected to %s:%s]\n", hoststr, portstr);
 	printf("[CLI ==> PRX --- SRV]\n");
@@ -377,10 +261,6 @@ handle_request()
 	printf("> %s\n", req.useragent);
 
 	char *host = req.host;
-	if (m.is_redirect && strstr(req.host, m.red_host) == NULL) {
-		host = m.red_host;
-	}
-
 	int servconn = connect_host(host);
 	printf("[SRV connected to %s:80]\n", host);
 	if (send_request(servconn) == -1) {
@@ -393,14 +273,13 @@ handle_request()
 	long bytes_in = 0;
 	long bytes_out = 0;
 	long header_length;
-	int falsified = !m.is_falsify;
 
 	nbytes = recv(servconn, buf, MAX_BUF,0);
 	bytes_in += nbytes;
 
 	if (nbytes > 0) {
 		header_length = parse_response(buf);
-		bytes_out += falsify(buf, nbytes, &falsified);
+		bytes_out += write(connfd, buf, nbytes);
 
 		if (res.has_length) {
 			//we know exactly how many bytes we're expecting
@@ -411,7 +290,7 @@ handle_request()
 				memset(&buf, 0, sizeof(buf));
 				nbytes = recv(servconn, buf, MAX_BUF,0);
 				bytes_in += nbytes;
-				bytes_out += falsify(buf, nbytes, &falsified);
+				bytes_out += write(connfd, buf, nbytes);
 				bytes_left -= nbytes;
 			}
 		}
@@ -420,7 +299,7 @@ handle_request()
 			memset(&buf, 0, sizeof(buf));
 			while ((nbytes = recv(servconn, buf, MAX_BUF,0)) > 0) {
 				bytes_in += nbytes;
-				bytes_out += falsify(buf, nbytes, &falsified);
+				bytes_out += write(connfd, buf, nbytes);
 
 				//check the last five characters to see if it's terminated
 				if (strcmp(&buf[nbytes-5], "0\r\n\r\n") == 0) {
@@ -594,7 +473,6 @@ main(int argc, char **argv)
 		if ((nbytes = recv(connfd, buf, MAX_BUF, 0)) > 0) {
 			//we received a request!
 			if (parse_request(buf) != -1 && strcmp(req.method, "GET") == 0) {
-				check_modes(req.path);
 				handle_request();
 			} else {
 				//Return a 403 Forbidden error if they attempt to load
