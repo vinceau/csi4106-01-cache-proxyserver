@@ -7,7 +7,7 @@ CC = gcc
 #   -std=c99     compile to the c99 standard
 #   -g           adds debugging information to the executable file
 
-CFLAGS = -Wall -Wextra -std=c99 -g
+CFLAGS = -Wall -Wextra -std=c99 -g -lpthread
 
 # the build target executable
 TARGET = project_4

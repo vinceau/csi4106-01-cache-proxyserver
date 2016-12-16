@@ -9,6 +9,7 @@
 
 #define _GNU_SOURCE
 
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -38,20 +39,26 @@ struct response {
 	int has_length;
 };
 
+struct thread_params {
+	int connfd;
+	char hoststr[NI_MAXHOST]; //readable client address
+	char portstr[NI_MAXSERV]; //readable client port
+};
+
 int
 connect_host(char *hostname);
 
 int
-parse_response(char *response);
+parse_response(char *response, struct response *r_ptr);
 
 int
-parse_request(char *request);
+parse_request(char *request, struct request * rptr);
 
 ssize_t
-send_request(int servconn);
+send_request(int servconn, struct request req);
 
 void
-handle_request();
+handle_request(struct request req, struct thread_params *p);
 
 void
 *get_in_addr(struct sockaddr *sa);
@@ -61,14 +68,39 @@ setup_server(int *listener, char *port);
 
 
 static int count = 1;
-struct request req; //latest request info
-struct response res; //latest response info
 
-int connfd; //socket of the connected client
-char hoststr[NI_MAXHOST]; //readable client address
-char portstr[NI_MAXSERV]; //readable client port
+const char *ERROR_MSG = "HTTP/1.1 403 Forbidden\r\n\r\n";
 
-char *ERROR_MSG = "HTTP/1.1 403 Forbidden\r\n\r\n";
+
+void*
+thread_main(void *params)
+{
+	/* Cast the pointer to the correct type.  */ 
+    struct thread_params *p = (struct thread_params*) params; 
+	pthread_detach(pthread_self());
+
+	char buf[MAX_BUF]; //buffer for messages
+	int nbytes; //the number of received bytes
+	struct request req;
+	memset(&req, 0, sizeof(req));
+
+	if ((nbytes = recv(p->connfd, buf, MAX_BUF, 0)) > 0) {
+		//we received a request!
+		if (parse_request(buf, &req) != -1 && strcmp(req.method, "GET") == 0) {
+			handle_request(req, p);
+		} else {
+			//Return a 403 Forbidden error if they attempt to load
+			//something needing SSL/HTTPS
+			write(p->connfd, ERROR_MSG, strlen(ERROR_MSG));
+			close(p->connfd);
+		}
+	}
+
+	//printf("thread terminated\n");
+	pthread_exit(NULL);
+	return NULL;
+}
+
 
 /*
  * Returns a new socket having connected to <hostname> on port 80
@@ -133,14 +165,14 @@ connect_host(char *hostname)
  * variable <res>. Returns the length of the response header.
  */
 int
-parse_response(char *response)
+parse_response(char *response, struct response *r_ptr)
 {
 	//printf("\n\nPARSE RESPONSE: <%s>\n\n", response);
-	res.has_length = 0;
-	res.has_type = 0;
+	r_ptr->has_length = 0;
+	r_ptr->has_type = 0;
 	//scan the method and url into the pointer
-	if (sscanf(response, "%s %d %[^\r\n]\r\n", res.http_v,
-			&res.status_no, res.status) < 3) {
+	if (sscanf(response, "%s %d %[^\r\n]\r\n", r_ptr->http_v,
+			&r_ptr->status_no, r_ptr->status) < 3) {
 		return 0;
 	}
 
@@ -150,13 +182,13 @@ parse_response(char *response)
 	while ((token = strsep(&string, "\r\n")) != NULL) {
 		if (strncmp(token, "Content-Type: ", 14) == 0) {
 			char *type = token + 14;
-			strncpy(res.c_type, type, sizeof(res.c_type));
-			res.has_type = 1;
+			strncpy(r_ptr->c_type, type, sizeof(r_ptr->c_type));
+			r_ptr->has_type = 1;
 		}
 		else if (strncmp(token, "Content-Length: ", 16) == 0) {
 			char *len = token + 16;
-			strncpy(res.c_length, len, sizeof(res.c_length));
-			res.has_length = 1;
+			strncpy(r_ptr->c_length, len, sizeof(r_ptr->c_length));
+			r_ptr->has_length = 1;
 		}
 		else if (strlen(token) == 0) {
 			//we've reached the end of the header, expecting body now
@@ -181,12 +213,12 @@ parse_response(char *response)
  * Returns 0 if successful, -1 otherwise.
  */
 int
-parse_request(char *request)
+parse_request(char *request, struct request * rptr)
 {
 	//printf("\n\nPARSE REQUEST: <%s>\n\n", request);
 	//scan the method and url into the pointer
-	if (sscanf(request, "%s %s %s\r\n", req.method, req.url,
-				req.http_v) < 3) {
+	if (sscanf(request, "%s %s %s\r\n", rptr->method, rptr->url,
+				rptr->http_v) < 3) {
 		return -1;
 	}
 
@@ -196,15 +228,15 @@ parse_request(char *request)
 	while ((token = strsep(&string, "\r\n")) != NULL) {
 		if (strncmp(token, "Host: ", 6) == 0) {
 			char *host = token + 6;
-			strncpy(req.host, host, sizeof(req.host));
+			strncpy(rptr->host, host, sizeof(rptr->host));
 
-			char *path_offset = strstr(req.url, host);
+			char *path_offset = strstr(rptr->url, host);
 			path_offset+=strlen(host);
-			strncpy(req.path, path_offset, sizeof(req.path));
+			strncpy(rptr->path, path_offset, sizeof(rptr->path));
 		}
 		else if (strncmp(token, "User-Agent: ", 12) == 0) {
 			char *userag = token + 12;
-			strncpy(req.useragent, userag, sizeof(req.useragent));
+			strncpy(rptr->useragent, userag, sizeof(rptr->useragent));
 		}
 		else if (strlen(token) == 0) {
 			//we've reached the end of the header, expecting body now
@@ -225,7 +257,7 @@ parse_request(char *request)
  * Generates a custom request and sends it to the socket at <servconn>.
  */
 ssize_t
-send_request(int servconn)
+send_request(int servconn, struct request req)
 {
 	char request[2048];
 	char *ua = req.useragent;
@@ -251,11 +283,10 @@ send_request(int servconn)
  * the required bytes.
  */
 void
-handle_request()
+handle_request(struct request req, struct thread_params *p)
 {
 	printf("-----------------------------------------------\n");
-
-	printf("[CLI connected to %s:%s]\n", hoststr, portstr);
+	printf("[CLI connected to %s:%s]\n", p->hoststr, p->portstr);
 	printf("[CLI ==> PRX --- SRV]\n");
 	printf("> GET %s%s\n", req.host, req.path);
 	printf("> %s\n", req.useragent);
@@ -263,7 +294,7 @@ handle_request()
 	char *host = req.host;
 	int servconn = connect_host(host);
 	printf("[SRV connected to %s:80]\n", host);
-	if (send_request(servconn) == -1) {
+	if (send_request(servconn, req) == -1) {
 		perror("Error writing to socket");
 		exit(1);
 	}
@@ -274,11 +305,15 @@ handle_request()
 	long bytes_out = 0;
 	long header_length;
 
+	int connfd = p->connfd;
+
+	struct response res;
+
 	nbytes = recv(servconn, buf, MAX_BUF,0);
 	bytes_in += nbytes;
 
 	if (nbytes > 0) {
-		header_length = parse_response(buf);
+		header_length = parse_response(buf, &res);
 		bytes_out += write(connfd, buf, nbytes);
 
 		if (res.has_length) {
@@ -430,6 +465,8 @@ main(int argc, char **argv)
 	int opt_comp = 0; //compression enabled
 	int opt_chunk = 0; //chunking enabled
 	int opt_pc = 0; //persistant connection enabled
+
+	int connfd;
 	
 	//check for optional arguments
 	for (int i = 4; i < argc; i++) {
@@ -445,8 +482,6 @@ main(int argc, char **argv)
 	int listener; //file descriptor of listening socket
 	struct sockaddr_storage their_addr; //connector's address info
 	socklen_t sin_size;
-	char buf[MAX_BUF]; //buffer for messages
-	int nbytes; //the number of received bytes
 
 	//set up the server on the specified port
 	setup_server(&listener, port);
@@ -454,9 +489,6 @@ main(int argc, char **argv)
 	printf("Starting proxy server on port %s\n", port);
 
 	while(1) {
-		memset(&req, 0, sizeof(req));
-		memset(&buf, 0, sizeof(buf));
-
 		sin_size = sizeof(their_addr);
 		connfd = accept(listener, (struct sockaddr *) &their_addr,
 				&sin_size);
@@ -465,22 +497,17 @@ main(int argc, char **argv)
 			continue;
 		}
 
-		//store the ip address and port into the hoststr and portstr
-		getnameinfo((struct sockaddr *)&their_addr, sin_size, hoststr,
-				sizeof(hoststr), portstr, sizeof(portstr),
+		pthread_t thread_id;
+		struct thread_params *params = malloc(sizeof(struct thread_params));
+		params->connfd = connfd;
+
+		//store the ip address and port into params too
+		getnameinfo((struct sockaddr *)&their_addr, sin_size, params->hoststr,
+				sizeof(params->hoststr), params->portstr, sizeof(params->portstr),
 				NI_NUMERICHOST | NI_NUMERICSERV);
 
-		if ((nbytes = recv(connfd, buf, MAX_BUF, 0)) > 0) {
-			//we received a request!
-			if (parse_request(buf) != -1 && strcmp(req.method, "GET") == 0) {
-				handle_request();
-			} else {
-				//Return a 403 Forbidden error if they attempt to load
-				//something needing SSL/HTTPS
-				write(connfd, ERROR_MSG, strlen(ERROR_MSG));
-				close(connfd);
-			}
-		}
+		pthread_create(&thread_id, NULL, &thread_main, (void*) params);
+
 	}
 	close(listener);
 	return 0;
