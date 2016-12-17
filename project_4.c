@@ -19,6 +19,7 @@
 
 #define BACKLOG 10 //how many pending connections the queue will hold
 #define MAX_BUF 8192 //the max size of messages
+#define BYTESINMB 1048576 //how many bytes are in a megabyte
 
 
 struct request {
@@ -54,6 +55,22 @@ struct options {
 	int pc_enabled;
 };
 
+struct response_block {
+	char *response;
+	long size;
+	void *next; //NULL if complete
+};
+
+struct cache_block {
+	char host[2048];
+	char path[2048];
+	struct response_block *response;
+	int lru;
+	long size;
+	void *next; //NULL
+};
+
+
 int
 connect_host(char *hostname);
 
@@ -84,6 +101,177 @@ struct options opt;
 
 sem_t mutex; //semaphore for mutual exclusion
 
+void *cache_start = NULL;
+void *cache_end = NULL;
+
+int cache_count = 0;
+long cache_size = 0;
+int lru_count = 0;
+
+void *
+search_cache(char *host, char *path)
+{
+	void *ref_ptr;
+	ref_ptr = cache_start;
+
+	while (ref_ptr != NULL) {
+		struct cache_block *reference;
+		reference = (struct cache_block*) ref_ptr;
+
+		if (strcmp(reference->host, host) == 0 &&
+				strcmp(reference->path, path) == 0) {
+			reference->lru = ++lru_count;
+			return (void*)reference->response;
+		}
+		ref_ptr = reference->next;
+	}
+	return NULL;
+}
+
+
+long
+remove_cache(long nbytes)
+{
+	void *ref_ptr;
+	void *prev_ptr = NULL;
+	void *min_prev_ptr = NULL;
+
+	struct cache_block *min;
+	struct cache_block *curr_c_block;
+
+	//we want to find the item with the lowest LRU and make sure we can
+	//free up at least nbytes worth of space
+	if (cache_start == NULL) {
+		//there's nothing in the cache
+		return 0;
+	}
+
+	//set the first element as the minimum
+	min = (struct cache_block*) cache_start;
+	ref_ptr = min->next;
+
+	//while there is a next
+	while (ref_ptr != NULL) {
+		curr_c_block = (struct cache_block*)ref_ptr;
+
+		if (curr_c_block->lru < min->lru) {
+			min = curr_c_block;
+			min_prev_ptr = prev_ptr;
+		}
+
+		prev_ptr = ref_ptr;
+		ref_ptr = curr_c_block->next;
+	}
+
+	//we should have found min by now
+	long space_freed = min->size;
+	cache_size -= space_freed;
+	if (min_prev_ptr == NULL) {
+		//first element is the smallest
+		cache_start = &min->next;
+	} else {
+		//set min's prev, to min's next
+		((struct cache_block*)min_prev_ptr)->next = min->next;
+		if (min->next == NULL) {
+			//the min is at the end so update cache_end
+			cache_end = min_prev_ptr;
+		}
+	}
+	free(min->response);
+	free(min);
+
+	cache_count--;
+	if (cache_count == 0) {
+		cache_end = NULL;
+	}
+
+	if (nbytes > space_freed) {
+		return space_freed + remove_cache(nbytes-space_freed);
+	}
+
+	return space_freed;
+}
+
+struct cache_block*
+add_cache(char *host, char *path, char *reference, long nbytes)
+{
+	if (opt.max_size > 0 && cache_size + nbytes > opt.max_size * 1000000) {
+		remove_cache(nbytes);
+	}
+
+	char* response_text = malloc(sizeof(char)*nbytes+1);
+	if (response_text == NULL) {
+		perror("Failed to allocate memory for response text");
+		exit(1);
+	}
+	strncpy(response_text, reference, nbytes);
+
+	struct response_block *r_block = malloc(sizeof(struct response_block));
+	if (r_block == NULL) {
+		perror("Failed to allocate memory for cache's response block");
+		exit(1);
+	}
+	r_block->response = response_text;
+	r_block->next = NULL;
+
+	struct cache_block *c_block = malloc(sizeof(struct cache_block));
+	if (c_block == NULL) {
+		perror("Failed to allocate memory for cache block");
+		exit(1);
+	}
+	strcpy(c_block->host, host);
+	strcpy(c_block->path, path);
+	c_block->response = r_block;
+	c_block->lru = ++lru_count;
+	c_block->size = nbytes;
+	c_block->next = NULL;
+
+	cache_size += nbytes;
+	cache_count++;
+
+	if (cache_start == NULL) {
+		cache_start = c_block;
+		cache_end = c_block;
+	} else {
+		((struct cache_block*)cache_end)->next = c_block;
+		cache_end = c_block;
+	}
+
+	return c_block;
+}
+
+
+int
+add_response_block(struct cache_block *c_block_ptr, char *response, long nbytes)
+{
+	if (opt.max_size > 0 && cache_size + nbytes > opt.max_size * BYTESINMB) {
+		remove_cache(nbytes);
+	}
+
+	struct response_block* curr = c_block_ptr->response;
+	while (curr->next != NULL) {
+		curr = (struct response_block*)curr->next;
+	}
+	struct response_block* n_block = malloc(sizeof(struct response_block));
+	if (n_block == NULL) {
+		perror("Failed to allocate memory for additional response block");
+		exit(1);
+	}
+	char* response_text = malloc(sizeof(char)*nbytes+1);
+	if (response_text == NULL) {
+		perror("Failed to allocate memory for response text");
+		exit(1);
+	}
+	strncpy(response_text, response, nbytes);
+
+	n_block->response = response_text;
+	n_block->size = nbytes;
+	n_block->next = NULL;
+	curr->next = n_block;
+	c_block_ptr->size += nbytes;
+	return 0;
+}
+
 
 void*
 thread_main(void *params)
@@ -113,6 +301,23 @@ thread_main(void *params)
 	thread_count--;
 	sem_post(&mutex);
 	return NULL;
+}
+
+int
+check_cache(char* host, char* path, int connfd) {
+	void* res = search_cache(host, path);
+	if (res == NULL) return 0;
+
+	struct cache_block* c_block = (struct cache_block*)res;
+	c_block->lru = ++lru_count; //update recently used count
+
+	struct response_block* r_block = c_block->response;
+	write(connfd, r_block->response, r_block->size);
+	while (r_block->next != NULL) {
+		r_block = (struct response_block*)(r_block->next);
+		write(connfd, r_block->response, r_block->size);
+	}
+	return 1;
 }
 
 
@@ -301,13 +506,19 @@ handle_request(struct request req, struct thread_params *p)
 {
 	sem_wait(&mutex);
 	printf("-----------------------------------------------\n");
-	printf("%d [Conn: %d/%d] [Cache: X/%dMB] [Items: X]\n\n",
-			++count, thread_count, opt.max_conn, opt.max_size);
+	printf("%d [Conn: %d/%d] [Cache: %.2f/%dMB] [Items: %d]\n\n",
+			++count, thread_count, opt.max_conn, (float)cache_size/BYTESINMB,
+			opt.max_size, cache_count);
 	printf("[CLI connected to %s:%s]\n", p->hoststr, p->portstr);
 	printf("[CLI ==> PRX --- SRV]\n");
 	printf("> GET %s%s\n", req.host, req.path);
 	printf("> %s\n", req.useragent);
 	sem_post(&mutex);
+
+	//if it's in the cache serve it from there
+	if (check_cache(req.host, req.path, p->connfd)) {
+		return;
+	}
 
 	char *host = req.host;
 	int servconn = connect_host(host);
@@ -326,6 +537,7 @@ handle_request(struct request req, struct thread_params *p)
 	int connfd = p->connfd;
 
 	struct response res;
+	struct cache_block* c_block_ptr;
 
 	nbytes = recv(servconn, buf, MAX_BUF,0);
 	bytes_in += nbytes;
@@ -335,6 +547,12 @@ handle_request(struct request req, struct thread_params *p)
 		bytes_out += write(connfd, buf, nbytes);
 
 		if (res.has_length) {
+
+			//add this to the cache
+			sem_wait(&mutex);
+			c_block_ptr = add_cache(req.host, req.path, buf, nbytes);
+			sem_post(&mutex);
+
 			//we know exactly how many bytes we're expecting
 			long bytes_left = atoll(res.c_length);
 			bytes_left -= (nbytes - header_length);
@@ -345,14 +563,34 @@ handle_request(struct request req, struct thread_params *p)
 				bytes_in += nbytes;
 				bytes_out += write(connfd, buf, nbytes);
 				bytes_left -= nbytes;
+
+				//add this to cache too
+				sem_wait(&mutex);
+				add_response_block(c_block_ptr, buf, nbytes);
+				sem_post(&mutex);
 			}
 		}
 		else {
+
+			if (opt.chunk_enabled) {
+				//add this to the cache
+				sem_wait(&mutex);
+				c_block_ptr = add_cache(req.host, req.path, buf, nbytes);
+				sem_post(&mutex);
+			}
+
 			//we have no idea how many bytes to expect... uh oh
 			memset(&buf, 0, sizeof(buf));
 			while ((nbytes = recv(servconn, buf, MAX_BUF,0)) > 0) {
 				bytes_in += nbytes;
 				bytes_out += write(connfd, buf, nbytes);
+
+				if (opt.chunk_enabled) {
+					//add this to cache too
+					sem_wait(&mutex);
+					add_response_block(c_block_ptr, buf, nbytes);
+					sem_post(&mutex);
+				}
 
 				//check the last five characters to see if it's terminated
 				if (strcmp(&buf[nbytes-5], "0\r\n\r\n") == 0) {
