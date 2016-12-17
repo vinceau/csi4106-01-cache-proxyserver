@@ -18,6 +18,8 @@
 #include <netdb.h>
 #include <unistd.h>
 
+#include "time.h"
+
 #define BACKLOG 10 //how many pending connections the queue will hold
 #define MAX_BUF 8192 //the max size of messages
 #define BYTESINMB 1048576 //how many bytes are in a megabyte
@@ -113,20 +115,6 @@ int cache_count = 0;
 long cache_size = 0;
 int lru_count = 0;
 
-
-void
-print_time(struct timeval* tv)
-{
-	char tmbuf[64];
-	strftime(tmbuf, sizeof tmbuf, "%H:%M:%S", localtime(&tv->tv_sec));
-	printf("%s.%03d\n", tmbuf, (tv->tv_usec / 1000));
-}
-
-long
-ms_elapsed(struct timeval* start, struct timeval* end)
-{
-	return 1000 * (end->tv_sec - start->tv_sec) + (end->tv_usec - start->tv_usec) / 1000;
-}
 
 void *
 search_cache(char *host, char *path)

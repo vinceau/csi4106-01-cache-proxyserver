@@ -12,10 +12,12 @@ CFLAGS = -Wall -Wextra -std=c99 -g -lpthread
 # the build target executable
 TARGET = project_4
 
+SOURCES = project_4.c time.c
+
 all: $(TARGET) 
 
 $(TARGET): $(TARGET).c
-	$(CC) $(TARGET).c $(CFLAGS) -o $(TARGET)
+	$(CC) $(SOURCES) $(CFLAGS) -o $(TARGET)
 
 clean:
 	$(RM) $(TARGET) 
