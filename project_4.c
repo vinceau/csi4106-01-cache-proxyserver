@@ -546,11 +546,14 @@ handle_request(struct request req, struct thread_params *p)
 	printf("> %s\n", req.useragent);
 	sem_post(&mutex);
 
+	int connfd = p->connfd;
+
 	//if it's in the cache serve it from there
 	if (check_cache(req.host, req.path, p->connfd)) {
+		close(connfd);
+		printf("[CLI disconnected]\n");
 		return;
 	}
-
 
 	char *host = req.host;
 	int servconn = connect_host(host);
@@ -567,8 +570,6 @@ handle_request(struct request req, struct thread_params *p)
 	long bytes_in = 0;
 	long bytes_out = 0;
 	long header_length;
-
-	int connfd = p->connfd;
 
 	struct response res;
 	struct cache_block* c_block_ptr;
