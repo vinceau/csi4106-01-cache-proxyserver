@@ -223,6 +223,7 @@ add_cache(char *host, char *path, char *reference, long nbytes,
 		exit(1);
 	}
 	r_block->response = response_text;
+	r_block->size = nbytes;
 	r_block->next = NULL;
 
 	struct cache_block *c_block = malloc(sizeof(struct cache_block));
