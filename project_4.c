@@ -125,7 +125,7 @@ search_cache(char *host, char *path)
 		if (strcmp(reference->host, host) == 0 &&
 				strcmp(reference->path, path) == 0) {
 			reference->lru = ++lru_count;
-			return (void*)reference->response;
+			return (void*)reference;
 		}
 		ref_ptr = reference->next;
 	}
