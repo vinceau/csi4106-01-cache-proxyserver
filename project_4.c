@@ -67,6 +67,10 @@ struct cache_block {
 	struct response_block *response;
 	int lru;
 	long size;
+	int status_no;
+	int has_type;
+	char status[256];
+	char c_type[256]; //content type
 	void *next; //NULL
 };
 
@@ -177,6 +181,12 @@ remove_cache(long nbytes)
 			cache_end = min_prev_ptr;
 		}
 	}
+
+	printf("################# CACHE REMOVED #################\n");
+	printf("> %s%s %.2fMB @ TIMESTAMP\n", min->host, min->path,
+			(float)min->size/BYTESINMB);
+	printf("> This file has been removed due to LRU!");
+
 	free(min->response);
 	free(min);
 
@@ -193,7 +203,8 @@ remove_cache(long nbytes)
 }
 
 struct cache_block*
-add_cache(char *host, char *path, char *reference, long nbytes)
+add_cache(char *host, char *path, char *reference, long nbytes,
+		struct response res)
 {
 	if (opt.max_size > 0 && cache_size + nbytes > opt.max_size * 1000000) {
 		remove_cache(nbytes);
@@ -224,7 +235,18 @@ add_cache(char *host, char *path, char *reference, long nbytes)
 	c_block->response = r_block;
 	c_block->lru = ++lru_count;
 	c_block->size = nbytes;
+	c_block->status_no = res.status_no;
+	c_block->has_type = res.has_type;
+	strcpy(c_block->status, res.status);
+	strcpy(c_block->c_type, res.c_type);
 	c_block->next = NULL;
+
+	float size = res.has_length ? atof(res.c_length) : (float)nbytes;
+
+	printf("################## CACHE ADDED ##################\n");
+	printf("> %s%s %.2fMB @ TIMESTAMP\n", host, path, size/BYTESINMB);
+	printf("> This file has been added to the cache\n");
+	printf("#################################################\n");
 
 	cache_size += nbytes;
 	cache_count++;
@@ -318,6 +340,12 @@ check_cache(char* host, char* path, int connfd) {
 	while (r_block->next != NULL) {
 		r_block = (struct response_block*)(r_block->next);
 		write(connfd, r_block->response, r_block->size);
+	}
+	printf("@@@@@@@@@@@@@@@@@@ CACHE HIT @@@@@@@@@@@@@@@@@@@@\n");
+	printf("[CLI <== PRX --- SRV] @ TIMESTAMP\n");
+	printf("> %d %s\n", c_block->status_no, c_block->status);
+	if (c_block->has_type) {
+		printf("> %s\n", c_block->c_type);
 	}
 	return 1;
 }
@@ -522,8 +550,11 @@ handle_request(struct request req, struct thread_params *p)
 		return;
 	}
 
+
 	char *host = req.host;
 	int servconn = connect_host(host);
+
+	printf("################## CACHE MISS ###################\n");
 	printf("[SRV connected to %s:80]\n", host);
 	if (send_request(servconn, req) == -1) {
 		perror("Error writing to socket");
@@ -548,11 +579,16 @@ handle_request(struct request req, struct thread_params *p)
 		header_length = parse_response(buf, &res);
 		bytes_out += write(connfd, buf, nbytes);
 
+		printf("[CLI --- PRX <== SRV]\n");
+		printf("> %d %s\n", res.status_no, res.status);
+		printf("> %s\n", res.c_type);
+
+
 		if (res.has_length) {
 
 			//add this to the cache
 			sem_wait(&mutex);
-			c_block_ptr = add_cache(req.host, req.path, buf, nbytes);
+			c_block_ptr = add_cache(req.host, req.path, buf, nbytes, res);
 			sem_post(&mutex);
 
 			//we know exactly how many bytes we're expecting
@@ -577,7 +613,7 @@ handle_request(struct request req, struct thread_params *p)
 			if (opt.chunk_enabled) {
 				//add this to the cache
 				sem_wait(&mutex);
-				c_block_ptr = add_cache(req.host, req.path, buf, nbytes);
+				c_block_ptr = add_cache(req.host, req.path, buf, nbytes, res);
 				sem_post(&mutex);
 			}
 
@@ -601,13 +637,10 @@ handle_request(struct request req, struct thread_params *p)
 				memset(&buf, 0, sizeof(buf));
 			}
 		}
-		printf("[CLI --- PRX <== SRV]\n");
-		printf("> %d %s\n", res.status_no, res.status);
-		printf("> %s %ldbytes\n", res.c_type, bytes_in);
 
-		printf("[CLI <== PRX --- SRV]\n");
+		printf("[CLI <== PRX --- SRV @ TIMESTAMP]\n");
 		printf("> %d %s\n", res.status_no, res.status);
-		printf("> %s %ldbytes\n", res.c_type, bytes_out);
+		printf("> %s\n", res.c_type);
 	}
 	close(connfd);
 	printf("[CLI disconnected]\n");
