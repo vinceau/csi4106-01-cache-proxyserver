@@ -136,6 +136,12 @@ search_cache(char *host, char *path)
 long
 remove_cache(long nbytes)
 {
+	if (cache_start == NULL ||
+			opt.max_size * BYTESINMB - cache_size > nbytes) {
+		//there's nothing in the cache or we already have enough space
+		return 0;
+	}
+
 	void *ref_ptr;
 	void *prev_ptr = NULL;
 	void *min_prev_ptr = NULL;
@@ -145,10 +151,6 @@ remove_cache(long nbytes)
 
 	//we want to find the item with the lowest LRU and make sure we can
 	//free up at least nbytes worth of space
-	if (cache_start == NULL) {
-		//there's nothing in the cache
-		return 0;
-	}
 
 	//set the first element as the minimum
 	min = (struct cache_block*) cache_start;
@@ -182,24 +184,20 @@ remove_cache(long nbytes)
 		}
 	}
 
-	printf("################# CACHE REMOVED #################\n");
-	printf("> %s%s %.2fMB @ TIMESTAMP\n", min->host, min->path,
-			(float)min->size/BYTESINMB);
-	printf("> This file has been removed due to LRU!");
-
-	free(min->response);
-	free(min);
-
 	cache_count--;
 	if (cache_count == 0) {
 		cache_end = NULL;
 	}
 
-	if (nbytes > space_freed) {
-		return space_freed + remove_cache(nbytes-space_freed);
-	}
+	printf("################# CACHE REMOVED #################\n");
+	printf("> %s%s %.2fMB @ TIMESTAMP\n", min->host, min->path,
+			(float)min->size/BYTESINMB);
+	printf("> This file has been removed due to LRU!\n");
 
-	return space_freed;
+	free(min->response);
+	free(min);
+
+	return space_freed + remove_cache(nbytes-space_freed);
 }
 
 struct cache_block*
