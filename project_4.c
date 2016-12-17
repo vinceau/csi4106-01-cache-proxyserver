@@ -292,6 +292,8 @@ add_response_block(struct cache_block *c_block_ptr, char *response, long nbytes)
 	n_block->next = NULL;
 	curr->next = n_block;
 	c_block_ptr->size += nbytes;
+	cache_size += nbytes;
+
 	return 0;
 }
 
