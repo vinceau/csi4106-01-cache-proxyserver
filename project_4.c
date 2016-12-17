@@ -56,7 +56,7 @@ struct options {
 };
 
 struct response_block {
-	char *response;
+	unsigned char *response;
 	long size;
 	void *next; //NULL if complete
 };
@@ -210,12 +210,12 @@ add_cache(char *host, char *path, char *reference, long nbytes,
 		remove_cache(nbytes);
 	}
 
-	char* response_text = malloc(sizeof(char)*nbytes+1);
+	unsigned char* response_text = malloc(sizeof(char)*nbytes+1);
 	if (response_text == NULL) {
 		perror("Failed to allocate memory for response text");
 		exit(1);
 	}
-	strncpy(response_text, reference, nbytes);
+	memcpy(response_text, reference, nbytes);
 
 	struct response_block *r_block = malloc(sizeof(struct response_block));
 	if (r_block == NULL) {
@@ -279,12 +279,12 @@ add_response_block(struct cache_block *c_block_ptr, char *response, long nbytes)
 		perror("Failed to allocate memory for additional response block");
 		exit(1);
 	}
-	char* response_text = malloc(sizeof(char)*nbytes+1);
+	unsigned char* response_text = malloc(sizeof(char)*nbytes+1);
 	if (response_text == NULL) {
 		perror("Failed to allocate memory for response text");
 		exit(1);
 	}
-	strncpy(response_text, response, nbytes);
+	memcpy(response_text, response, nbytes);
 
 	n_block->response = response_text;
 	n_block->size = nbytes;
