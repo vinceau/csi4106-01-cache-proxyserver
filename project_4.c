@@ -172,7 +172,7 @@ remove_cache(long nbytes)
 	cache_size -= space_freed;
 	if (min_prev_ptr == NULL) {
 		//first element is the smallest
-		cache_start = &min->next;
+		cache_start = min->next;
 	} else {
 		//set min's prev, to min's next
 		((struct cache_block*)min_prev_ptr)->next = min->next;
