@@ -14,6 +14,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/time.h>
 #include <netdb.h>
 #include <unistd.h>
 
@@ -112,6 +113,21 @@ int cache_count = 0;
 long cache_size = 0;
 int lru_count = 0;
 
+
+void
+print_time(struct timeval* tv)
+{
+	char tmbuf[64];
+	strftime(tmbuf, sizeof tmbuf, "%H:%M:%S", localtime(&tv->tv_sec));
+	printf("%s.%03d\n", tmbuf, (tv->tv_usec / 1000));
+}
+
+long
+ms_elapsed(struct timeval* start, struct timeval* end)
+{
+	return 1000 * (end->tv_sec - start->tv_sec) + (end->tv_usec - start->tv_usec) / 1000;
+}
+
 void *
 search_cache(char *host, char *path)
 {
@@ -189,9 +205,14 @@ remove_cache(long nbytes)
 		cache_end = NULL;
 	}
 
+	
+	struct timeval tv;
+	gettimeofday(&tv, NULL);
+
 	printf("################# CACHE REMOVED #################\n");
-	printf("> %s%s %.2fMB @ TIMESTAMP\n", min->host, min->path,
+	printf("> %s%s %.2fMB @ ", min->host, min->path,
 			(float)min->size/BYTESINMB);
+	print_time(&tv);
 	printf("> This file has been removed due to LRU!\n");
 
 	free(min->response);
@@ -240,10 +261,13 @@ add_cache(char *host, char *path, char *reference, long nbytes,
 	strcpy(c_block->c_type, res.c_type);
 	c_block->next = NULL;
 
+	struct timeval tv;
+	gettimeofday(&tv, NULL);
 	float size = res.has_length ? atof(res.c_length) : (float)nbytes;
 
 	printf("################## CACHE ADDED ##################\n");
-	printf("> %s%s %.2fMB @ TIMESTAMP\n", host, path, size/BYTESINMB);
+	printf("> %s%s %.2fMB @ ", host, path, size/BYTESINMB);
+	print_time(&tv);
 	printf("> This file has been added to the cache\n");
 	printf("#################################################\n");
 
@@ -329,7 +353,7 @@ thread_main(void *params)
 }
 
 int
-check_cache(char* host, char* path, int connfd) {
+check_cache(char* host, char* path, int connfd, struct timeval* start) {
 	void* res = search_cache(host, path);
 	if (res == NULL) return 0;
 
@@ -342,12 +366,17 @@ check_cache(char* host, char* path, int connfd) {
 		r_block = (struct response_block*)(r_block->next);
 		write(connfd, r_block->response, r_block->size);
 	}
+	struct timeval end;
+	gettimeofday(&end, NULL);
+
 	printf("@@@@@@@@@@@@@@@@@@ CACHE HIT @@@@@@@@@@@@@@@@@@@@\n");
-	printf("[CLI <== PRX --- SRV] @ TIMESTAMP\n");
+	printf("[CLI <== PRX --- SRV] @ ");
+	print_time(&end);
 	printf("> %d %s\n", c_block->status_no, c_block->status);
 	if (c_block->has_type) {
 		printf("> %s\n", c_block->c_type);
 	}
+	printf("# %ldms\n", ms_elapsed(start, &end));
 	return 1;
 }
 
@@ -520,7 +549,11 @@ send_request(int servconn, struct request req)
 			"User-Agent: %s\r\n"
 			"\r\n", path, host, ua);
 
-	printf("[CLI --- PRX ==> SRV]\n");
+	struct timeval tv;
+	gettimeofday(&tv, NULL);
+
+	printf("[CLI --- PRX ==> SRV] @ ");
+	print_time(&tv);
 	printf("> GET %s%s\n", host, path);
 	printf("> %s\n", ua);
 	//printf("%s\n", request);
@@ -535,13 +568,17 @@ send_request(int servconn, struct request req)
 void
 handle_request(struct request req, struct thread_params *p)
 {
+	struct timeval start;
+	gettimeofday(&start, NULL);
+
 	sem_wait(&mutex);
 	printf("-----------------------------------------------\n");
 	printf("%d [Conn: %d/%d] [Cache: %.2f/%dMB] [Items: %d]\n\n",
 			++count, thread_count, opt.max_conn, (float)cache_size/BYTESINMB,
 			opt.max_size, cache_count);
 	printf("[CLI connected to %s:%s]\n", p->hoststr, p->portstr);
-	printf("[CLI ==> PRX --- SRV]\n");
+	printf("[CLI ==> PRX --- SRV] @ ");
+	print_time(&start);
 	printf("> GET %s%s\n", req.host, req.path);
 	printf("> %s\n", req.useragent);
 	sem_post(&mutex);
@@ -549,7 +586,7 @@ handle_request(struct request req, struct thread_params *p)
 	int connfd = p->connfd;
 
 	//if it's in the cache serve it from there
-	if (check_cache(req.host, req.path, p->connfd)) {
+	if (check_cache(req.host, req.path, connfd, &start)) {
 		close(connfd);
 		printf("[CLI disconnected]\n");
 		return;
@@ -574,6 +611,8 @@ handle_request(struct request req, struct thread_params *p)
 	struct response res;
 	struct cache_block* c_block_ptr;
 
+	struct timeval tv;
+
 	nbytes = recv(servconn, buf, MAX_BUF,0);
 	bytes_in += nbytes;
 
@@ -581,7 +620,9 @@ handle_request(struct request req, struct thread_params *p)
 		header_length = parse_response(buf, &res);
 		bytes_out += write(connfd, buf, nbytes);
 
-		printf("[CLI --- PRX <== SRV]\n");
+		gettimeofday(&tv, NULL);
+		printf("[CLI --- PRX <== SRV] @ ");
+		print_time(&tv);
 		printf("> %d %s\n", res.status_no, res.status);
 		printf("> %s\n", res.c_type);
 
@@ -640,9 +681,12 @@ handle_request(struct request req, struct thread_params *p)
 			}
 		}
 
-		printf("[CLI <== PRX --- SRV @ TIMESTAMP]\n");
+		gettimeofday(&tv, NULL);
+		printf("[CLI <== PRX --- SRV @ ");
+		print_time(&tv);
 		printf("> %d %s\n", res.status_no, res.status);
 		printf("> %s\n", res.c_type);
+		printf("# %ldms\n", ms_elapsed(&start, &tv));
 	}
 	close(connfd);
 	printf("[CLI disconnected]\n");
