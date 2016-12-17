@@ -15,6 +15,10 @@ struct request {
 	char host[2048];
 	char path[2048];
 	char useragent[256];
+	char encoding[256];
+	char connection[256];
+	int has_connection;
+	int has_encoding;
 };
 
 struct response {

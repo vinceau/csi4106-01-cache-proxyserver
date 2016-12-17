@@ -352,6 +352,9 @@ parse_request(char *request, struct request * rptr)
 		return -1;
 	}
 
+	rptr->has_connection = 0;
+	rptr->has_encoding = 0;
+
 	char *token, *string, *tofree;
 	tofree = string = strdup(request);
 	//loop through the request line by line (saved to token)
@@ -363,6 +366,16 @@ parse_request(char *request, struct request * rptr)
 			char *path_offset = strstr(rptr->url, host);
 			path_offset+=strlen(host);
 			strncpy(rptr->path, path_offset, sizeof(rptr->path));
+		}
+		else if (strncmp(token, "Connection: ", 12) == 0) {
+			char *conn = token + 12;
+			strncpy(rptr->connection, conn, sizeof(rptr->connection));
+			rptr->has_connection = 1;
+		}
+		else if (strncmp(token, "Accept-Encoding: ", 17) == 0) {
+			char *enc = token + 17;
+			strncpy(rptr->encoding, enc, sizeof(rptr->encoding));
+			rptr->has_encoding= 1;
 		}
 		else if (strncmp(token, "User-Agent: ", 12) == 0) {
 			char *userag = token + 12;
@@ -389,24 +402,34 @@ parse_request(char *request, struct request * rptr)
 ssize_t
 send_request(int servconn, struct request req)
 {
-	char request[2048];
-	char *ua = req.useragent;
-	char *host = req.host;
-	char *path = req.path;
+	char enc[256];
+	if (req.has_encoding) {
+		snprintf(enc, sizeof enc, "Accept-Encoding: %s\r\n", req.encoding);
+	}
+	char* extra1 = opt.comp_enabled ? enc : "";
 
+	char conn[256];
+	if (req.has_connection) {
+		snprintf(conn, sizeof conn, "Connection: %s\r\n", req.encoding);
+	}
+	char* extra2 = opt.pc_enabled ? conn : "";
+
+	char request[2048];
 	snprintf(request, sizeof(request),
-			"GET %s HTTP/1.0\r\n"
+			"GET %s HTTP/1.1\r\n"
 			"Host: %s\r\n"
 			"User-Agent: %s\r\n"
-			"\r\n", path, host, ua);
+			"%s"
+			"%s"
+			"\r\n", req.path, req.host, req.useragent, extra1, extra2);
 
 	struct timeval tv;
 	gettimeofday(&tv, NULL);
 
 	printf("[CLI --- PRX ==> SRV] @ ");
 	print_time(&tv);
-	printf("> GET %s%s\n", host, path);
-	printf("> %s\n", ua);
+	printf("> GET %s%s\n", req.host, req.path);
+	printf("> %s\n", req.useragent);
 	//printf("%s\n", request);
 
 	return write(servconn, request, strlen(request));
