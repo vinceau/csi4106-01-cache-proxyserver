@@ -12,7 +12,7 @@ CFLAGS = -Wall -Wextra -std=c99 -g -lpthread
 # the build target executable
 TARGET = project_4
 
-SOURCES = project_4.c time.c
+SOURCES = project_4.c time.c network.c
 
 all: $(TARGET) 
 
