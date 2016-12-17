@@ -297,9 +297,11 @@ thread_main(void *params)
 		}
 	}
 
+	//sem_wait(&thread_count);
 	sem_wait(&mutex);
 	thread_count--;
 	sem_post(&mutex);
+	free(params);
 	return NULL;
 }
 
@@ -763,6 +765,10 @@ main(int argc, char **argv)
 
 		pthread_t thread_id;
 		struct thread_params *params = malloc(sizeof(struct thread_params));
+		if (params == NULL) {
+			perror("Couldn't allocate memory for thread parameters");
+			exit(1);
+		}
 		params->connfd = connfd;
 
 		//store the ip address and port into params too
