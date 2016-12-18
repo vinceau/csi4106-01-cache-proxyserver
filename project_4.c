@@ -41,12 +41,11 @@ make_space(long nbytes) {
 
 	//keep removing the lowest LRU until we good
 	while (!can_fit(nbytes)) {
-		void* lru_addr = find_lru();
-		if (lru_addr == NULL) {
+		C_block* min = find_lru();
+		if (min == NULL) {
 			return -1;
 		}
 
-		C_block* min = (C_block*) lru_addr;
 		struct timeval tv;
 		gettimeofday(&tv, NULL);
 
@@ -55,7 +54,7 @@ make_space(long nbytes) {
 				(float)min->size/BYTESINMB);
 		print_time(&tv);
 		printf("> This file has been removed due to LRU!\n");
-		free_cache_block(lru_addr);
+		free_cache_block(min);
 	}
 
 	return 0;
@@ -129,14 +128,13 @@ thread_main(void *params)
 
 int
 check_cache(char* host, char* path, int connfd, struct timeval* start) {
-	void* res = search_cache(host, path);
-	if (res == NULL) return 0;
+	C_block* c_block = search_cache(host, path);
+	if (c_block == NULL) return 0;
 
-	C_block* c_block = (C_block*)res;
 	R_block* r_block = c_block->response;
 	write(connfd, r_block->text, r_block->size);
 	while (r_block->next != NULL) {
-		r_block = (R_block*)(r_block->next);
+		r_block = r_block->next;
 		write(connfd, r_block->text, r_block->size);
 	}
 	struct timeval end;
@@ -349,10 +347,7 @@ handle_request(struct request req, struct thread_params *p)
 	long bytes_in = 0;
 	long bytes_out = 0;
 	long header_length;
-
 	struct response res;
-	C_block* c_block_ptr;
-
 	struct timeval tv;
 
 	nbytes = recv(servconn, buf, MAX_BUF,0);
@@ -368,12 +363,13 @@ handle_request(struct request req, struct thread_params *p)
 		printf("> %d %s\n", res.status_no, res.status);
 		printf("> %s\n", res.c_type);
 
+		C_block* c_block;
 
 		if (res.has_length) {
 
 			//add this to the cache
 			sem_wait(&mutex);
-			c_block_ptr = safe_add_cache(req.host, req.path, buf, nbytes, res);
+			c_block = safe_add_cache(req.host, req.path, buf, nbytes, res);
 			sem_post(&mutex);
 
 			//we know exactly how many bytes we're expecting
@@ -389,8 +385,8 @@ handle_request(struct request req, struct thread_params *p)
 
 				//add this to cache too
 				sem_wait(&mutex);
-				if (c_block_ptr != NULL) {
-					add_response_block(c_block_ptr, buf, nbytes);
+				if (c_block != NULL) {
+					add_response_block(c_block, buf, nbytes);
 				}
 				sem_post(&mutex);
 			}
@@ -400,7 +396,7 @@ handle_request(struct request req, struct thread_params *p)
 			if (opt.chunk_enabled) {
 				//add this to the cache
 				sem_wait(&mutex);
-				c_block_ptr = safe_add_cache(req.host, req.path, buf, nbytes, res);
+				c_block = safe_add_cache(req.host, req.path, buf, nbytes, res);
 				sem_post(&mutex);
 			}
 
@@ -413,8 +409,8 @@ handle_request(struct request req, struct thread_params *p)
 				if (opt.chunk_enabled) {
 					//add this to cache too
 					sem_wait(&mutex);
-					if (c_block_ptr != NULL) {
-						add_response_block(c_block_ptr, buf, nbytes);
+					if (c_block != NULL) {
+						add_response_block(c_block, buf, nbytes);
 					}
 					sem_post(&mutex);
 				}
