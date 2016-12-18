@@ -24,8 +24,32 @@ typedef struct C_block {
 	R_block* end; //points to the last response block
 } C_block;
 
+void
+set_max_cache_size(int mb);
+
+long
+get_current_cache_size();
+
+int
+get_cache_count();
+
+int
+can_fit(long nbytes);
+
+int
+could_fit(long nbytes);
+
 C_block*
 search_cache(char *host, char *path);
+
+void
+free_response_block(R_block* r);
+
+long
+free_cache_block(C_block* cb);
+
+C_block*
+find_lru();
 
 int
 free_up(long nbytes);
@@ -35,27 +59,6 @@ add_cache(char* host, char* path, char* reference, long nbytes, int status_no, c
 
 int
 add_response_block(C_block* c_block_ptr, char *response, long nbytes);
-
-int
-could_fit(long nbytes);
-
-int
-can_fit(long nbytes);
-
-C_block*
-find_lru();
-
-long
-free_cache_block(C_block* cb);
-
-long
-get_current_cache_size();
-
-int
-get_cache_count();
-
-void
-set_max_cache_size(int mb);
 
 #endif
 

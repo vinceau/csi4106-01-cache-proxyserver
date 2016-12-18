@@ -4,14 +4,15 @@
 
 #include "cache.h"
 
-C_block* cache_start = NULL;
-C_block* cache_end = NULL;
 
-int cache_count = 0;
-long cache_size = 0;
-int lru_count = 0;
+C_block* cache_start = NULL; //starting cache block
+C_block* cache_end = NULL;   //ending cache block
 
+int cache_count = 0; //current items in the cache
+long cache_size = 0; //total size of the cache in bytes
+int lru_count = 0;   //current maximum LRU count
 long max_cache_size = 0; //in bytes
+
 
 void
 set_max_cache_size(int mb)
@@ -31,12 +32,31 @@ get_cache_count()
 	return cache_count;
 }
 
+/*
+ * Returns true if it is possible to add nbytes of data to the existing
+ * cache. False otherwise.
+ */
+int
+can_fit(long nbytes)
+{
+	return max_cache_size == 0 || cache_size + nbytes < max_cache_size;
+}
+
+/*
+ * Returns true if the maximum cache size is big enough to hold nbytes of data.
+ * Does not consider the current size of the cache.
+ */
 int
 could_fit(long nbytes)
 {
 	return max_cache_size == 0 || nbytes < max_cache_size;
 }
 
+/*
+ * Searches the cache for the cache block matching <host> and <port>.
+ *
+ * Returns a pointer to the cache block if successful, and NULL otherwise.
+ */
 C_block*
 search_cache(char *host, char *path)
 {
@@ -53,6 +73,14 @@ search_cache(char *host, char *path)
 	return NULL;
 }
 
+/*
+ * Frees the memory allocated to the response block <r>.
+ *
+ * First free's the text, then goes down the linked list freeing every the
+ * following blocks. Finally frees itself.
+ *
+ * It does this recursively.
+ */
 void
 free_response_block(R_block* r)
 {
@@ -63,6 +91,11 @@ free_response_block(R_block* r)
 	}
 }
 
+/*
+ * Frees the cache block <cb> and the associated request block linked list.
+ *
+ * Returns the amount of space gained after freeing the structure.
+ */
 long
 free_cache_block(C_block* cb)
 {
@@ -95,7 +128,6 @@ free_cache_block(C_block* cb)
 	return space_freed;
 }
 
-
 /*
  * Returns a pointer to the Least Recently Used cache block
  */
@@ -107,28 +139,15 @@ find_lru()
 
 	//set the first element as the minimum
 	C_block* min = cache_start;
-
 	C_block* curr = min->next;
 
 	//while there is a next
 	while (curr != NULL) {
-		if (curr->lru < min->lru) {
-			min = curr;
-		}
+		if (curr->lru < min->lru) min = curr;
 		curr = curr->next;
 	}
 
 	return min;
-}
-
-/*
- * This returns true if it is possible to add nbytes of data to the existing
- * cache. False otherwise.
- */
-int
-can_fit(long nbytes)
-{
-	return max_cache_size == 0 || cache_size + nbytes < max_cache_size;
 }
 
 /*
@@ -149,14 +168,18 @@ free_up(long nbytes)
 }
 
 /*
- * Warning! This function will not check whether or not whether the total
- * space needed for the cache block is greater than the max_cache_size!!
+ * Creates a cache_block and adds it to the cache linked list. The body of the
+ * response is stored in a response_block attached to the cache_block.
+ *
+ * Returns a pointer to the cache_block if successfully allocated space.
+ * Returns NULL if failed to allocate space, or the required space is too big
+ * for the cache itself.
  */
 C_block*
 add_cache(char *host, char *path, char *reference, long nbytes, int status_no, char* status, int has_type, char* c_type)
 {
 	if (!can_fit(nbytes)) {
-		free_up(nbytes);
+		if (!free_up(nbytes)) return NULL;
 	}
 
 	unsigned char* response_text = calloc(1, nbytes+1);
@@ -209,41 +232,46 @@ add_cache(char *host, char *path, char *reference, long nbytes, int status_no, c
 	return c_block;
 }
 
-
+/*
+ * This adds another response block to the chain of response blocks at <cb>.
+ *
+ * Returns true if a fail occured and false otherwise.
+ *
+ * Note! This does not check the maximum cache size! This is because there is
+ * an off chance that the total number size of the response (sum of all the
+ * individual blocks) could exceed the maximum size of the cache (chunked
+ * encoding means we don't know how many bytes to expect).
+ * As a result, technically when we go to free the LRU, we could end up freeing
+ * the cache_block that we are trying to add to.
+ */
 int
-add_response_block(C_block *c_block_ptr, char* response, long nbytes)
+add_response_block(C_block *cb, char* response, long nbytes)
 {
-	/*
-	if (!can_fit(nbytes)) {
-		free_up(nbytes);
-	}
-	*/
-
-//	printf("adding a block to %s%s\n", c_block_ptr->host, c_block_ptr->path);
-//	printf("block length: %ld\n", nbytes);
-//	printf("extra block contents: <<%s>>\n", response);
+	int fail = 1;
 
 	R_block* n_block = calloc(1, sizeof(R_block));
 	if (n_block == NULL) {
 		perror("Failed to allocate memory for additional response block");
-		return 1;
+		return fail;
 	}
 	unsigned char* response_text = calloc(1, nbytes+1);
 	if (response_text == NULL) {
 		perror("Failed to allocate memory for response text");
-		return 1;
+		free(n_block);
+		return fail;
 	}
 	memcpy(response_text, response, nbytes);
 
 	n_block->text = response_text;
 	n_block->size = nbytes;
 	n_block->next = NULL;
+
 	//add this block to the end of the cache block
-	c_block_ptr->end->next = n_block;
-	c_block_ptr->size += nbytes;
-	c_block_ptr->end = n_block;
+	cb->end->next = n_block;
+	cb->size += nbytes;
+	cb->end = n_block;
 	cache_size += nbytes;
 
-	return 0;
+	return !fail;
 }
 
