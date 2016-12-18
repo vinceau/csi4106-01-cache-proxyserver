@@ -24,15 +24,14 @@
 #include "project_4.h"
 
 const char* ERROR_MSG = "HTTP/1.1 403 Forbidden\r\n\r\n";
-
 int count = 0; //total number of requests
-int thread_count = 0; //total number of running threads
-struct options opt;
-
+int thread_count = 0; //total number of threads currently running
+struct options opt; //global settings/options
 sem_t mutex; //semaphore for mutual exclusion
 
+
 /*
- * Make at least nbytes of free space in the cache
+ * Free cache space until we have at least <nbytes> bytes free.
  */
 int
 make_space(long nbytes) {
@@ -41,14 +40,13 @@ make_space(long nbytes) {
 
 	//keep removing the lowest LRU until we good
 	while (!can_fit(nbytes)) {
+		//find min
 		C_block* min = find_lru();
-		if (min == NULL) {
-			return -1;
-		}
+		if (min == NULL) return -1;
 
+		//print cache removal info
 		struct timeval tv;
 		gettimeofday(&tv, NULL);
-
 		printf("################# CACHE REMOVED #################\n");
 		printf("> %s%s %.2fMB @ ", min->host, min->path,
 				(float)min->size/BYTESINMB);
@@ -56,10 +54,18 @@ make_space(long nbytes) {
 		printf("> This file has been removed due to LRU!\n");
 		free_cache_block(min);
 	}
-
 	return 0;
 }
 
+/*
+ * Adds the response text <res_text> to the cache.
+ *
+ * If the total size of the response is known, we check to see if we can fit
+ * the entire thing.
+ *
+ * If we successfully add to the cache, return a pointer to the cache block.
+ * Return NULL otherwise.
+ */
 C_block*
 safe_add_cache(char* host, char* path, char* res_text, long nbytes, struct response res)
 {
@@ -91,43 +97,15 @@ safe_add_cache(char* host, char* path, char* res_text, long nbytes, struct respo
 		printf("> This file has been added to the cache\n");
 		printf("#################################################\n");
 	}
-
 	return block;
 }
 
-
-void*
-thread_main(void* params)
-{
-	/* Cast the pointer to the correct type. */ 
-    struct thread_params* p = (struct thread_params*) params; 
-	pthread_detach(pthread_self());
-
-	char buf[MAX_BUF]; //buffer for messages
-	int nbytes; //the number of received bytes
-	struct request req;
-	memset(&req, 0, sizeof(req));
-
-	if ((nbytes = recv(p->connfd, buf, MAX_BUF, 0)) > 0) {
-		//we received a request!
-		if (parse_request(buf, &req) != -1 && strcmp(req.method, "GET") == 0) {
-			handle_request(req, p);
-		} else {
-			//Return a 403 Forbidden error if they attempt to load
-			//something needing SSL/HTTPS
-			write(p->connfd, ERROR_MSG, strlen(ERROR_MSG));
-			close(p->connfd);
-		}
-	}
-
-	//sem_wait(&thread_count);
-	sem_wait(&mutex);
-	thread_count--;
-	sem_post(&mutex);
-	free(params);
-	return NULL;
-}
-
+/*
+ * Check the cache to see if we have accessed the page before. If we have,
+ * serve the page directly from the cache.
+ *
+ * Returns true if we successfully served from the cache, and false otherwise.
+ */
 int
 check_cache(char* host, char* path, int connfd, struct timeval* start) {
 	C_block* c_block = search_cache(host, path);
@@ -153,10 +131,46 @@ check_cache(char* host, char* path, int connfd, struct timeval* start) {
 	return 1;
 }
 
+/*
+ * The main function for the thread.
+ *
+ * Stores the request info and handles GET requests. Writes an error to the
+ * socket for all other request methods or HTTPS requests.
+ */
+void*
+thread_main(void* params)
+{
+	/* Cast the pointer to the correct type. */ 
+    struct thread_params* p = (struct thread_params*) params;
+	pthread_detach(pthread_self()); //we are never ever ever getting back together
+
+	char buf[MAX_BUF]; //buffer for messages
+	int nbytes; //the number of received bytes
+	struct request req;
+	memset(&req, 0, sizeof(req));
+
+	if ((nbytes = recv(p->connfd, buf, MAX_BUF, 0)) > 0) {
+		//we received a request!
+		if (parse_request(buf, &req) != -1 && strcmp(req.method, "GET") == 0) {
+			handle_request(req, p);
+		} else {
+			//Return a 403 Forbidden error if they attempt to load
+			//something needing SSL/HTTPS
+			write(p->connfd, ERROR_MSG, strlen(ERROR_MSG));
+			close(p->connfd);
+		}
+	}
+
+	sem_wait(&mutex);
+	thread_count--;
+	sem_post(&mutex);
+	free(params);
+	return NULL;
+}
 
 /*
- * Traverses <response> and stores attribute information in the global
- * variable <res>. Returns the length of the response header.
+ * Traverses <response> and stores attribute information into the response
+ * structure pointed to by <res>. Returns the length of the response header.
  */
 int
 parse_response(char* response, struct response* r_ptr)
@@ -197,14 +211,13 @@ parse_response(char* response, struct response* r_ptr)
 
 	//calculate header length (the plus one for the \n i believe)
 	long header_length = strlen(response) - strlen(string) + 1;
-
 	free(tofree);
 	return header_length;
 }
 
 /*
  * Reads through the request and extracts any useful information
- * into the global struct request <req> variable.
+ * into struct request pointed to by <req>.
  * Returns 0 if successful, -1 otherwise.
  */
 int
@@ -257,7 +270,6 @@ parse_request(char* request, struct request* rptr)
 		string += 1;
 	}
 	free(tofree);
-
 	return 0;
 }
 
@@ -296,19 +308,18 @@ send_request(int servconn, struct request req)
 	printf("> GET %s%s\n", req.host, req.path);
 	printf("> %s\n", req.useragent);
 	//printf("%s\n", request);
-
 	return write(servconn, request, strlen(request));
 }
 
 /*
- * Actually process the request. Ensures that we actually send and receive all
- * the required bytes.
+ * Actually process the request.
+ *
+ * We access the cache in a mutually exclusive manner using semaphores.
  */
 void
 handle_request(struct request req, struct thread_params* p)
 {
 	int connfd = p->connfd;
-
 	struct timeval start;
 	gettimeofday(&start, NULL);
 
@@ -334,26 +345,22 @@ handle_request(struct request req, struct thread_params* p)
 	}
 	sem_post(&mutex);
 
-	char* host = req.host;
-	int servconn = connect_host(host);
-
 	printf("################## CACHE MISS ###################\n");
-	printf("[SRV connected to %s:80]\n", host);
+	int servconn = connect_host(req.host);
 	if (send_request(servconn, req) == -1) {
 		perror("Error writing to socket");
 		exit(1);
 	}
+	printf("[SRV connected to %s:80]\n", req.host);
 
 	char buf[MAX_BUF]; //buffer for messages
-	int nbytes; //the number of received bytes
-	long bytes_in = 0;
-	long bytes_out = 0;
 	long header_length;
 	struct response res;
 	struct timeval tv;
 
-	nbytes = recv(servconn, buf, MAX_BUF,0);
-	bytes_in += nbytes;
+	int nbytes = recv(servconn, buf, MAX_BUF,0);
+	long bytes_in = nbytes; //number of received bytes
+	long bytes_out = 0;
 
 	if (nbytes > 0) {
 		header_length = parse_response(buf, &res);
@@ -369,7 +376,7 @@ handle_request(struct request req, struct thread_params* p)
 		int failed = 0;
 
 		if (res.has_length) {
-
+			//we know exactly how many bytes we are expecting
 			//add this to the cache
 			sem_wait(&mutex);
 			c_block = safe_add_cache(req.host, req.path, buf, nbytes, res);
@@ -378,7 +385,6 @@ handle_request(struct request req, struct thread_params* p)
 			//we know exactly how many bytes we're expecting
 			long bytes_left = atoll(res.c_length);
 			bytes_left -= (nbytes - header_length);
-
 			while (bytes_left > 0) {
 				memset(&buf, 0, sizeof(buf));
 				nbytes = recv(servconn, buf, MAX_BUF,0);
@@ -395,9 +401,9 @@ handle_request(struct request req, struct thread_params* p)
 			}
 		}
 		else {
-
+			//we don't know how many bytes to add (chunking)
 			if (opt.chunk_enabled) {
-				//add this to the cache
+				//add this to the cache only if chunking is explicitly enabled
 				sem_wait(&mutex);
 				c_block = safe_add_cache(req.host, req.path, buf, nbytes, res);
 				sem_post(&mutex);
@@ -409,8 +415,8 @@ handle_request(struct request req, struct thread_params* p)
 				bytes_in += nbytes;
 				bytes_out += write(connfd, buf, nbytes);
 
+				//add next chunk to cache, again only if chunking is enabled
 				if (opt.chunk_enabled) {
-					//add this to cache too
 					sem_wait(&mutex);
 					if (c_block != NULL) {
 						failed |= add_response_block(c_block, buf, nbytes);
@@ -441,7 +447,6 @@ handle_request(struct request req, struct thread_params* p)
 	}
 	close(connfd);
 	printf("[CLI disconnected]\n");
-
 	close(servconn);
 	printf("[SRV disconnected]\n");
 	return;
@@ -487,7 +492,6 @@ main(int argc, char** argv)
 
 	//set up the server on the specified port
 	setup_server(&listener, port);
-
 	printf("Starting proxy server on port %s\n", port);
 
 	sem_init(&mutex, 0, 1);
@@ -508,6 +512,7 @@ main(int argc, char** argv)
 			sem_post(&mutex);
 		}
 
+		//spawn a new thread to handle this request
 		pthread_t thread_id;
 		struct thread_params* params = calloc(1, sizeof(struct thread_params));
 		if (params == NULL) {
@@ -524,6 +529,8 @@ main(int argc, char** argv)
 		sem_wait(&mutex);
 		thread_count++;
 		sem_post(&mutex);
+
+		//actually run the thread
 		pthread_create(&thread_id, NULL, &thread_main, (void*) params);
 
 	}

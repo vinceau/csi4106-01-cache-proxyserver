@@ -2,7 +2,7 @@
 #define PROJECT_4_H
 
 #include <stdio.h>
-#include <netdb.h>
+#include <netdb.h> //needed for NI_MAXHOST and NI_MAXSERV
 
 #define MAX_BUF 8192 //the max size of messages
 
@@ -45,6 +45,15 @@ struct thread_params {
 };
 
 
+int
+make_space(long nbytes);
+
+struct C_block*
+safe_add_cache(char* host, char* path, char* reference, long nbytes, struct response res);
+
+int
+check_cache(char* host, char* path, int connfd, struct timeval* start);
+
 void*
 thread_main(void* params);
 
@@ -59,11 +68,5 @@ send_request(int servconn, struct request req);
 
 void
 handle_request(struct request req, struct thread_params* p);
-
-struct C_block*
-safe_add_cache(char* host, char* path, char* reference, long nbytes, struct response res);
-
-int
-check_cache(char* host, char* path, int connfd, struct timeval* start);
 
 #endif
