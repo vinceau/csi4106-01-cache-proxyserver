@@ -20,6 +20,7 @@
 
 #include "time.h"
 #include "network.h"
+#include "cache.h"
 #include "project_4.h"
 
 const char* ERROR_MSG = "HTTP/1.1 403 Forbidden\r\n\r\n";
@@ -30,217 +31,66 @@ struct options opt;
 
 sem_t mutex; //semaphore for mutual exclusion
 
-void* cache_start = NULL;
-void* cache_end = NULL;
-
-int cache_count = 0;
-long cache_size = 0;
-int lru_count = 0;
-
-
-void*
-search_cache(char* host, char* path)
-{
-	void* ref_ptr;
-	ref_ptr = cache_start;
-
-	while (ref_ptr != NULL) {
-		struct cache_block* reference;
-		reference = (struct cache_block*) ref_ptr;
-
-		if (strcmp(reference->host, host) == 0 &&
-				strcmp(reference->path, path) == 0) {
-			reference->lru = ++lru_count;
-			return (void*)reference;
-		}
-		ref_ptr = reference->next;
-	}
-	return NULL;
-}
-
-void
-free_response_block(void* r_ptr)
-{
-	if (r_ptr == NULL) return;
-
-	struct response_block* r_block = r_ptr;
-	free_response_block(r_block->next);
-	free(r_ptr);
-}
-
-
-long
-remove_cache(long nbytes)
-{
-	if (cache_start == NULL || sufficient_space(nbytes)) {
-		//there's nothing in the cache or we already have enough space
-		return 0;
-	}
-
-	void* ref_ptr = NULL;
-	void* prev_ptr = NULL;
-	void* min_prev_ptr = NULL;
-
-	struct cache_block* min;
-	struct cache_block* curr_c_block;
-
-	//we want to find the item with the lowest LRU and make sure we can
-	//free up at least nbytes worth of space
-
-	//set the first element as the minimum
-	min = (struct cache_block*) cache_start;
-	ref_ptr = min->next;
-
-	//while there is a next
-	while (ref_ptr != NULL) {
-		curr_c_block = (struct cache_block*)ref_ptr;
-
-		if (curr_c_block->lru < min->lru) {
-			min = curr_c_block;
-			min_prev_ptr = prev_ptr;
-		}
-
-		prev_ptr = ref_ptr;
-		ref_ptr = curr_c_block->next;
-	}
-
-	//we should have found min by now
-	long space_freed = min->size;
-	cache_size -= space_freed;
-	if (min_prev_ptr == NULL) {
-		//first element is the smallest
-		cache_start = min->next;
-	} else {
-		//set min's prev, to min's next
-		((struct cache_block*)min_prev_ptr)->next = min->next;
-		if (min->next == NULL) {
-			//the min is at the end so update cache_end
-			cache_end = min_prev_ptr;
-		}
-	}
-
-	cache_count--;
-	if (cache_count == 0) {
-		cache_end = NULL;
-	}
-
-	
-	struct timeval tv;
-	gettimeofday(&tv, NULL);
-
-	printf("################# CACHE REMOVED #################\n");
-	printf("> %s%s %.2fMB @ ", min->host, min->path,
-			(float)min->size/BYTESINMB);
-	print_time(&tv);
-	printf("> This file has been removed due to LRU!\n");
-
-	free_response_block(min->response);
-	free(min);
-
-	return space_freed + remove_cache(nbytes-space_freed);
-}
-
+/*
+ * Make at least nbytes of free space in the cache
+ */
 int
-sufficient_space(long nbytes)
-{
-	return opt.max_size == 0 || cache_size + nbytes < opt.max_size * BYTESINMB;
+make_space(long nbytes) {
+	//return if we couldn't fit nbytes of data even if we tried
+	if (!could_fit(nbytes)) return -1;
+
+	//keep removing the lowest LRU until we good
+	while (!can_fit(nbytes)) {
+		C_block* min = find_lru();
+		if (min == NULL) {
+			return -1;
+		}
+
+		struct timeval tv;
+		gettimeofday(&tv, NULL);
+
+		printf("################# CACHE REMOVED #################\n");
+		printf("> %s%s %.2fMB @ ", min->host, min->path,
+				(float)min->size/BYTESINMB);
+		print_time(&tv);
+		printf("> This file has been removed due to LRU!\n");
+		free_cache_block(min);
+	}
+
+	return 0;
 }
 
-struct cache_block*
-add_cache(char* host, char* path, char* reference, long nbytes, struct response res)
+C_block*
+safe_add_cache(char* host, char* path, char* res_text, long nbytes, struct response res)
 {
-	if (!sufficient_space(nbytes)) {
-		remove_cache(nbytes);
-	}
-
-	unsigned char* response_text = calloc(1, sizeof(char)*nbytes+1);
-	if (response_text == NULL) {
-		perror("Failed to allocate memory for response text");
-		exit(1);
-	}
-	memcpy(response_text, reference, nbytes);
-
-	struct response_block* r_block = calloc(1, sizeof(struct response_block));
-	if (r_block == NULL) {
-		perror("Failed to allocate memory for cache's response block");
-		exit(1);
-	}
-	r_block->response = response_text;
-	r_block->size = nbytes;
-	r_block->next = NULL;
-
-	struct cache_block* c_block = calloc(1, sizeof(struct cache_block));
-	if (c_block == NULL) {
-		perror("Failed to allocate memory for cache block");
-		exit(1);
-	}
-	strcpy(c_block->host, host);
-	strcpy(c_block->path, path);
-	c_block->response = r_block;
-	c_block->lru = ++lru_count;
-	c_block->size = nbytes;
-	c_block->status_no = res.status_no;
-	c_block->has_type = res.has_type;
-	strcpy(c_block->status, res.status);
-	strcpy(c_block->c_type, res.c_type);
-	c_block->next = NULL;
-
+	long total_size = res.has_length ? atof(res.c_length) : nbytes;
 	struct timeval tv;
-	gettimeofday(&tv, NULL);
-	float size = res.has_length ? atof(res.c_length) : (float)nbytes;
 
+	//if we can't fit the entire file then just return
+	if (!could_fit(total_size)) {
+		printf("################## CACHE SKIP ###################\n");
+		printf("> %s%s %.2fMB @ ", host, path, (float)total_size/BYTESINMB);
+		printf("> This file is too big for the cache!\n");
+		gettimeofday(&tv, NULL);
+		print_time(&tv);
+		printf("#################################################\n");
+		return NULL;
+	}
+
+	//we can fit the entire file but we'll need to free up some space first
+	if (!can_fit(total_size) && make_space(total_size) == -1) {
+		return NULL;
+	}
+
+	C_block* block = add_cache(host, path, res_text, nbytes, res.status_no, res.status, res.has_type, res.c_type);
 	printf("################## CACHE ADDED ##################\n");
-	printf("> %s%s %.2fMB @ ", host, path, size/BYTESINMB);
+	printf("> %s%s %.2fMB @ ", host, path, (float)total_size/BYTESINMB);
+	gettimeofday(&tv, NULL);
 	print_time(&tv);
 	printf("> This file has been added to the cache\n");
 	printf("#################################################\n");
 
-	cache_size += nbytes;
-	cache_count++;
-
-	if (cache_start == NULL) {
-		cache_start = c_block;
-		cache_end = c_block;
-	} else {
-		((struct cache_block*)cache_end)->next = c_block;
-		cache_end = c_block;
-	}
-
-	return c_block;
-}
-
-
-int
-add_response_block(struct cache_block* c_block_ptr, char* response, long nbytes)
-{
-	if (!sufficient_space(nbytes)) {
-		remove_cache(nbytes);
-	}
-
-	struct response_block* curr = c_block_ptr->response;
-	while (curr->next != NULL) {
-		curr = (struct response_block*)curr->next;
-	}
-	struct response_block* n_block = calloc(1, sizeof(struct response_block));
-	if (n_block == NULL) {
-		perror("Failed to allocate memory for additional response block");
-		exit(1);
-	}
-	unsigned char* response_text = calloc(1, sizeof(char)*nbytes+1);
-	if (response_text == NULL) {
-		perror("Failed to allocate memory for response text");
-		exit(1);
-	}
-	memcpy(response_text, response, nbytes);
-
-	n_block->response = response_text;
-	n_block->size = nbytes;
-	n_block->next = NULL;
-	curr->next = n_block;
-	c_block_ptr->size += nbytes;
-	cache_size += nbytes;
-
-	return 0;
+	return block;
 }
 
 
@@ -278,17 +128,14 @@ thread_main(void* params)
 
 int
 check_cache(char* host, char* path, int connfd, struct timeval* start) {
-	void* res = search_cache(host, path);
-	if (res == NULL) return 0;
+	C_block* c_block = search_cache(host, path);
+	if (c_block == NULL) return 0;
 
-	struct cache_block* c_block = (struct cache_block*)res;
-	c_block->lru = ++lru_count; //update recently used count
-
-	struct response_block* r_block = c_block->response;
-	write(connfd, r_block->response, r_block->size);
+	R_block* r_block = c_block->response;
+	write(connfd, r_block->text, r_block->size);
 	while (r_block->next != NULL) {
-		r_block = (struct response_block*)(r_block->next);
-		write(connfd, r_block->response, r_block->size);
+		r_block = r_block->next;
+		write(connfd, r_block->text, r_block->size);
 	}
 	struct timeval end;
 	gettimeofday(&end, NULL);
@@ -458,29 +305,32 @@ send_request(int servconn, struct request req)
 void
 handle_request(struct request req, struct thread_params* p)
 {
+	int connfd = p->connfd;
+
 	struct timeval start;
 	gettimeofday(&start, NULL);
 
 	sem_wait(&mutex);
 	printf("-----------------------------------------------\n");
 	printf("%d [Conn: %d/%d] [Cache: %.2f/%dMB] [Items: %d]\n\n",
-			++count, thread_count, opt.max_conn, (float)cache_size/BYTESINMB,
-			opt.max_size, cache_count);
+			++count, thread_count, opt.max_conn,
+			(float)get_current_cache_size()/BYTESINMB,
+			opt.max_size, get_cache_count());
 	printf("[CLI connected to %s:%s]\n", p->hoststr, p->portstr);
 	printf("[CLI ==> PRX --- SRV] @ ");
 	print_time(&start);
 	printf("> GET %s%s\n", req.host, req.path);
 	printf("> %s\n", req.useragent);
-	sem_post(&mutex);
-
-	int connfd = p->connfd;
 
 	//if it's in the cache serve it from there
+	//if found, the LRU is increased which is why we need to have it in
+	//a mutex block
 	if (check_cache(req.host, req.path, connfd, &start)) {
 		close(connfd);
 		printf("[CLI disconnected]\n");
 		return;
 	}
+	sem_post(&mutex);
 
 	char* host = req.host;
 	int servconn = connect_host(host);
@@ -497,10 +347,7 @@ handle_request(struct request req, struct thread_params* p)
 	long bytes_in = 0;
 	long bytes_out = 0;
 	long header_length;
-
 	struct response res;
-	struct cache_block* c_block_ptr;
-
 	struct timeval tv;
 
 	nbytes = recv(servconn, buf, MAX_BUF,0);
@@ -516,12 +363,13 @@ handle_request(struct request req, struct thread_params* p)
 		printf("> %d %s\n", res.status_no, res.status);
 		printf("> %s\n", res.c_type);
 
+		C_block* c_block;
 
 		if (res.has_length) {
 
 			//add this to the cache
 			sem_wait(&mutex);
-			c_block_ptr = add_cache(req.host, req.path, buf, nbytes, res);
+			c_block = safe_add_cache(req.host, req.path, buf, nbytes, res);
 			sem_post(&mutex);
 
 			//we know exactly how many bytes we're expecting
@@ -537,7 +385,9 @@ handle_request(struct request req, struct thread_params* p)
 
 				//add this to cache too
 				sem_wait(&mutex);
-				add_response_block(c_block_ptr, buf, nbytes);
+				if (c_block != NULL) {
+					add_response_block(c_block, buf, nbytes);
+				}
 				sem_post(&mutex);
 			}
 		}
@@ -546,7 +396,7 @@ handle_request(struct request req, struct thread_params* p)
 			if (opt.chunk_enabled) {
 				//add this to the cache
 				sem_wait(&mutex);
-				c_block_ptr = add_cache(req.host, req.path, buf, nbytes, res);
+				c_block = safe_add_cache(req.host, req.path, buf, nbytes, res);
 				sem_post(&mutex);
 			}
 
@@ -559,7 +409,9 @@ handle_request(struct request req, struct thread_params* p)
 				if (opt.chunk_enabled) {
 					//add this to cache too
 					sem_wait(&mutex);
-					add_response_block(c_block_ptr, buf, nbytes);
+					if (c_block != NULL) {
+						add_response_block(c_block, buf, nbytes);
+					}
 					sem_post(&mutex);
 				}
 
@@ -602,6 +454,7 @@ main(int argc, char** argv)
 	char* port = argv[1]; //port we're listening on
 	opt.max_conn = atol(argv[2]); //max no. connections
 	opt.max_size = atol(argv[3]); //max cache size
+	set_max_cache_size(opt.max_size);
 
 	opt.comp_enabled = 0; //compression enabled
 	opt.chunk_enabled = 0; //chunking enabled

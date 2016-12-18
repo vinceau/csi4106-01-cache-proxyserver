@@ -5,7 +5,6 @@
 #include <netdb.h>
 
 #define MAX_BUF 8192 //the max size of messages
-#define BYTESINMB 1048576 //how many bytes are in a megabyte
 
 
 struct request {
@@ -39,25 +38,6 @@ struct options {
 	int pc_enabled;
 };
 
-struct response_block {
-	unsigned char* response;
-	long size;
-	void* next; //NULL if complete
-};
-
-struct cache_block {
-	char host[2048];
-	char path[2048];
-	struct response_block* response;
-	int lru;
-	long size;
-	int status_no;
-	int has_type;
-	char status[256];
-	char c_type[256]; //content type
-	void* next; //NULL
-};
-
 struct thread_params {
 	int connfd;
 	char hoststr[NI_MAXHOST]; //readable client address
@@ -66,25 +46,7 @@ struct thread_params {
 
 
 void*
-search_cache(char* host, char* path);
-
-long
-remove_cache(long nbytes);
-
-struct cache_block*
-add_cache(char* host, char* path, char* reference, long nbytes, struct response res);
-
-int
-add_response_block(struct cache_block* c_block_ptr, char* response, long nbytes);
-
-void*
 thread_main(void* params);
-
-int
-sufficient_space(long nbytes);
-
-int
-check_cache(char* host, char* path, int connfd, struct timeval* start);
 
 int
 parse_response(char* response, struct response* r_ptr);
@@ -98,5 +60,10 @@ send_request(int servconn, struct request req);
 void
 handle_request(struct request req, struct thread_params* p);
 
+struct C_block*
+safe_add_cache(char* host, char* path, char* reference, long nbytes, struct response res);
+
+int
+check_cache(char* host, char* path, int connfd, struct timeval* start);
 
 #endif
