@@ -58,6 +58,16 @@ search_cache(char *host, char *path)
 	return NULL;
 }
 
+void
+free_response_block(void* r_ptr)
+{
+	if (r_ptr == NULL) return;
+
+	struct response_block* r_block = r_ptr;
+	free_response_block(r_block->next);
+	free(r_ptr);
+}
+
 
 long
 remove_cache(long nbytes)
@@ -125,7 +135,7 @@ remove_cache(long nbytes)
 	print_time(&tv);
 	printf("> This file has been removed due to LRU!\n");
 
-	free(min->response);
+	free_response_block(min->response);
 	free(min);
 
 	return space_freed + remove_cache(nbytes-space_freed);
@@ -330,10 +340,11 @@ parse_response(char *response, struct response *r_ptr)
 		}
 		string += 1;
 	}
-	free(tofree);
 
 	//calculate header length (the plus one for the \n i believe)
 	long header_length = strlen(response) - strlen(string) + 1;
+
+	free(tofree);
 	return header_length;
 }
 
