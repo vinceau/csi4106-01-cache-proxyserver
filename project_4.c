@@ -72,8 +72,7 @@ free_response_block(void* r_ptr)
 long
 remove_cache(long nbytes)
 {
-	if (cache_start == NULL ||
-			opt.max_size * BYTESINMB - cache_size > nbytes) {
+	if (cache_start == NULL || sufficient_space(nbytes)) {
 		//there's nothing in the cache or we already have enough space
 		return 0;
 	}
@@ -141,21 +140,27 @@ remove_cache(long nbytes)
 	return space_freed + remove_cache(nbytes-space_freed);
 }
 
+int
+sufficient_space(long nbytes)
+{
+	return opt.max_size == 0 || cache_size + nbytes < opt.max_size * BYTESINMB;
+}
+
 struct cache_block*
 add_cache(char *host, char *path, char *reference, long nbytes, struct response res)
 {
-	if (opt.max_size > 0 && cache_size + nbytes > opt.max_size * 1000000) {
+	if (!sufficient_space(nbytes)) {
 		remove_cache(nbytes);
 	}
 
-	unsigned char* response_text = malloc(sizeof(char)*nbytes+1);
+	unsigned char* response_text = calloc(1, sizeof(char)*nbytes+1);
 	if (response_text == NULL) {
 		perror("Failed to allocate memory for response text");
 		exit(1);
 	}
 	memcpy(response_text, reference, nbytes);
 
-	struct response_block *r_block = malloc(sizeof(struct response_block));
+	struct response_block *r_block = calloc(1, sizeof(struct response_block));
 	if (r_block == NULL) {
 		perror("Failed to allocate memory for cache's response block");
 		exit(1);
@@ -164,7 +169,7 @@ add_cache(char *host, char *path, char *reference, long nbytes, struct response 
 	r_block->size = nbytes;
 	r_block->next = NULL;
 
-	struct cache_block *c_block = malloc(sizeof(struct cache_block));
+	struct cache_block *c_block = calloc(1, sizeof(struct cache_block));
 	if (c_block == NULL) {
 		perror("Failed to allocate memory for cache block");
 		exit(1);
@@ -208,7 +213,7 @@ add_cache(char *host, char *path, char *reference, long nbytes, struct response 
 int
 add_response_block(struct cache_block *c_block_ptr, char *response, long nbytes)
 {
-	if (opt.max_size > 0 && cache_size + nbytes > opt.max_size * BYTESINMB) {
+	if (!sufficient_space(nbytes)) {
 		remove_cache(nbytes);
 	}
 
@@ -216,12 +221,12 @@ add_response_block(struct cache_block *c_block_ptr, char *response, long nbytes)
 	while (curr->next != NULL) {
 		curr = (struct response_block*)curr->next;
 	}
-	struct response_block* n_block = malloc(sizeof(struct response_block));
+	struct response_block* n_block = calloc(1, sizeof(struct response_block));
 	if (n_block == NULL) {
 		perror("Failed to allocate memory for additional response block");
 		exit(1);
 	}
-	unsigned char* response_text = malloc(sizeof(char)*nbytes+1);
+	unsigned char* response_text = calloc(1, sizeof(char)*nbytes+1);
 	if (response_text == NULL) {
 		perror("Failed to allocate memory for response text");
 		exit(1);
@@ -642,7 +647,7 @@ main(int argc, char **argv)
 		}
 
 		pthread_t thread_id;
-		struct thread_params *params = malloc(sizeof(struct thread_params));
+		struct thread_params *params = calloc(1, sizeof(struct thread_params));
 		if (params == NULL) {
 			perror("Couldn't allocate memory for thread parameters");
 			exit(1);

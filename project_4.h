@@ -81,6 +81,9 @@ void*
 thread_main(void *params);
 
 int
+sufficient_space(long nbytes);
+
+int
 check_cache(char* host, char* path, int connfd, struct timeval* start);
 
 int
