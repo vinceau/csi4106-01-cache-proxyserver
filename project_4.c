@@ -137,7 +137,7 @@ check_cache(char* host, char* path, int connfd, struct timeval* start) {
 	write(connfd, r_block->text, r_block->size);
 	while (r_block->next != NULL) {
 		r_block = (R_block*)(r_block->next);
-		write(connfd, r_block->next, r_block->size);
+		write(connfd, r_block->text, r_block->size);
 	}
 	struct timeval end;
 	gettimeofday(&end, NULL);
