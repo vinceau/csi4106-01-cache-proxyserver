@@ -143,6 +143,10 @@ find_lru()
 	return min;
 }
 
+/*
+ * This returns true if it is possible to add nbytes of data to the existing
+ * cache. False otherwise.
+ */
 int
 can_fit(long nbytes)
 {

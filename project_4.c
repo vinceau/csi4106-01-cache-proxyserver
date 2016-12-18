@@ -31,15 +31,20 @@ struct options opt;
 
 sem_t mutex; //semaphore for mutual exclusion
 
+/*
+ * Make at least nbytes of free space in the cache
+ */
 int
 make_space(long nbytes) {
+	//return if we couldn't fit nbytes of data even if we tried
 	if (!could_fit(nbytes)) return -1;
 
 	//keep removing the lowest LRU until we good
-	long space_freed = 0;
-	while (space_freed < nbytes) {
+	while (!can_fit(nbytes)) {
 		void* lru_addr = find_lru();
-		if (lru_addr == NULL) return -1;
+		if (lru_addr == NULL) {
+			return -1;
+		}
 
 		struct cache_block* min = (struct cache_block*) lru_addr;
 		struct timeval tv;
