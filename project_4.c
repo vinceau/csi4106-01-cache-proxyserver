@@ -59,19 +59,29 @@ make_space(long nbytes) {
 struct cache_block*
 safe_add_cache(char *host, char *path, char *res_text, long nbytes, struct response res)
 {
-	if (!could_fit(nbytes)) return NULL;
+	long total_size = res.has_length ? atof(res.c_length) : nbytes;
+	struct timeval tv;
 
-	if (!can_fit(nbytes) && make_space(nbytes) == -1) {
+	//if we can't fit the entire file then just return
+	if (!could_fit(total_size)) {
+		printf("################## CACHE SKIP ###################\n");
+		printf("> %s%s %.2fMB @ ", host, path, (float)total_size/BYTESINMB);
+		printf("> This file is too big for the cache!\n");
+		gettimeofday(&tv, NULL);
+		print_time(&tv);
+		printf("#################################################\n");
+		return NULL;
+	}
+
+	//we can fit the entire file but we'll need to free up some space first
+	if (!can_fit(total_size) && make_space(total_size) == -1) {
 		return NULL;
 	}
 
 	struct cache_block* block = add_cache(host, path, res_text, nbytes, res.status_no, res.status, res.has_type, res.c_type);
-	struct timeval tv;
-	gettimeofday(&tv, NULL);
-	float size = res.has_length ? atof(res.c_length) : (float)nbytes;
-
 	printf("################## CACHE ADDED ##################\n");
-	printf("> %s%s %.2fMB @ ", host, path, size/BYTESINMB);
+	printf("> %s%s %.2fMB @ ", host, path, (float)total_size/BYTESINMB);
+	gettimeofday(&tv, NULL);
 	print_time(&tv);
 	printf("> This file has been added to the cache\n");
 	printf("#################################################\n");
