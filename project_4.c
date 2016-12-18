@@ -46,7 +46,7 @@ make_space(long nbytes) {
 			return -1;
 		}
 
-		struct cache_block* min = (struct cache_block*) lru_addr;
+		C_block* min = (C_block*) lru_addr;
 		struct timeval tv;
 		gettimeofday(&tv, NULL);
 
@@ -61,7 +61,7 @@ make_space(long nbytes) {
 	return 0;
 }
 
-struct cache_block*
+C_block*
 safe_add_cache(char *host, char *path, char *res_text, long nbytes, struct response res)
 {
 	long total_size = res.has_length ? atof(res.c_length) : nbytes;
@@ -83,7 +83,7 @@ safe_add_cache(char *host, char *path, char *res_text, long nbytes, struct respo
 		return NULL;
 	}
 
-	struct cache_block* block = add_cache(host, path, res_text, nbytes, res.status_no, res.status, res.has_type, res.c_type);
+	C_block* block = add_cache(host, path, res_text, nbytes, res.status_no, res.status, res.has_type, res.c_type);
 	printf("################## CACHE ADDED ##################\n");
 	printf("> %s%s %.2fMB @ ", host, path, (float)total_size/BYTESINMB);
 	gettimeofday(&tv, NULL);
@@ -132,12 +132,12 @@ check_cache(char* host, char* path, int connfd, struct timeval* start) {
 	void* res = search_cache(host, path);
 	if (res == NULL) return 0;
 
-	struct cache_block* c_block = (struct cache_block*)res;
-	struct response_block* r_block = c_block->response;
-	write(connfd, r_block->response, r_block->size);
+	C_block* c_block = (C_block*)res;
+	R_block* r_block = c_block->response;
+	write(connfd, r_block->text, r_block->size);
 	while (r_block->next != NULL) {
-		r_block = (struct response_block*)(r_block->next);
-		write(connfd, r_block->response, r_block->size);
+		r_block = (R_block*)(r_block->next);
+		write(connfd, r_block->next, r_block->size);
 	}
 	struct timeval end;
 	gettimeofday(&end, NULL);
@@ -351,7 +351,7 @@ handle_request(struct request req, struct thread_params *p)
 	long header_length;
 
 	struct response res;
-	struct cache_block* c_block_ptr;
+	C_block* c_block_ptr;
 
 	struct timeval tv;
 

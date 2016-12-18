@@ -4,8 +4,8 @@
 
 #include "cache.h"
 
-void *cache_start = NULL;
-void *cache_end = NULL;
+C_block* cache_start = NULL;
+C_block* cache_end = NULL;
 
 int cache_count = 0;
 long cache_size = 0;
@@ -37,67 +37,60 @@ could_fit(long nbytes)
 	return max_cache_size == 0 || nbytes < max_cache_size;
 }
 
-void *
+C_block*
 search_cache(char *host, char *path)
 {
-	void *ref_ptr;
-	ref_ptr = cache_start;
+	C_block* ref = cache_start;
 
-	while (ref_ptr != NULL) {
-		struct cache_block *reference;
-		reference = (struct cache_block*) ref_ptr;
-
-		if (strcmp(reference->host, host) == 0 &&
-				strcmp(reference->path, path) == 0) {
-			reference->lru = ++lru_count;
-			return (void*)reference;
+	while (ref != NULL) {
+		if (strcmp(ref->host, host) == 0 &&
+				strcmp(ref->path, path) == 0) {
+			ref->lru = ++lru_count;
+			return ref;
 		}
-		ref_ptr = reference->next;
+		ref = ref->next;
 	}
 	return NULL;
 }
 
 void
-free_response_block(void* r_ptr)
+free_response_block(R_block* r)
 {
-	if (r_ptr == NULL) return;
+	if (r == NULL) return;
 
-	struct response_block* r_block = (struct response_block*)r_ptr;
-	free_response_block(r_block->next);
-	free(r_block);
+	//free_response_block(r->next);
+	free(r);
 }
 
 long
-free_cache_block(void* cb_ptr)
+free_cache_block(C_block* cb)
 {
-	if (cb_ptr == NULL) return 0;
-
-	struct cache_block* min = (struct cache_block*) cb_ptr;
+	if (cb == NULL) return 0;
 
 	//fix following blocks
-	if (min->next == NULL) {
-		//the min is at the end so update cache_end
-		cache_end = min->prev;
+	if (cb->next == NULL) {
+		//the block is at the end so update cache_end
+		cache_end = cb->prev;
 	} else {
-		//there's something after min so update its prev
-		((struct cache_block*)min->next)->prev = min->prev;
+		//there's something after the block so update its prev
+		cb->next->prev = cb->prev;
 	}
 
 	//fix previous blocks
-	if (min->prev == NULL) {
-		//first element is the smallest
-		cache_start = min->next;
+	if (cb->prev == NULL) {
+		//removing the first block
+		cache_start = cb->next;
 	} else {
-		//set min's prev, to min's next
-		((struct cache_block*)min->prev)->next = min->next;
+		//set the prev block, to cb's next
+		cb->prev->next = cb->next;
 	}
 
 	cache_count--;
 
-	long space_freed = min->size;
+	long space_freed = cb->size;
 	cache_size -= space_freed;
-	free_response_block((void*)min->response);
-	free(min);
+	free_response_block(cb->response);
+	free(cb);
 	return space_freed;
 }
 
@@ -105,39 +98,23 @@ free_cache_block(void* cb_ptr)
 /*
  * Returns a pointer to the Least Recently Used cache block
  */
-void*
+C_block*
 find_lru()
 {
-	if (cache_start == NULL) {
-		//there's nothing in the cache
-		return NULL;
-	}
-
-	void *ref_ptr;
-	void *prev_ptr = NULL;
-	void *min_prev_ptr = NULL;
-
-	struct cache_block *min;
-	struct cache_block *curr_c_block;
-
-	//we want to find the item with the lowest LRU and make sure we can
-	//free up at least nbytes worth of space
+	//return if there's nothing in the cache
+	if (cache_start == NULL) return NULL;
 
 	//set the first element as the minimum
-	min = (struct cache_block*) cache_start;
-	ref_ptr = min->next;
+	C_block* min = cache_start;
+
+	C_block* curr = min->next;
 
 	//while there is a next
-	while (ref_ptr != NULL) {
-		curr_c_block = (struct cache_block*)ref_ptr;
-
-		if (curr_c_block->lru < min->lru) {
-			min = curr_c_block;
-			min_prev_ptr = prev_ptr;
+	while (curr != NULL) {
+		if (curr->lru < min->lru) {
+			min = curr;
 		}
-
-		prev_ptr = ref_ptr;
-		ref_ptr = curr_c_block->next;
+		curr = curr->next;
 	}
 
 	return min;
@@ -174,7 +151,7 @@ free_up(long nbytes)
  * Warning! This function will not check whether or not whether the total
  * space needed for the cache block is greater than the max_cache_size!!
  */
-struct cache_block*
+C_block*
 add_cache(char *host, char *path, char *reference, long nbytes, int status_no, char* status, int has_type, char* c_type)
 {
 	if (!can_fit(nbytes)) {
@@ -188,16 +165,16 @@ add_cache(char *host, char *path, char *reference, long nbytes, int status_no, c
 	}
 	memcpy(response_text, reference, nbytes);
 
-	struct response_block* r_block = calloc(1, sizeof(struct response_block));
+	R_block* r_block = calloc(1, sizeof(R_block));
 	if (r_block == NULL) {
 		perror("Failed to allocate memory for cache's response block");
 		exit(1);
 	}
-	r_block->response = response_text;
+	r_block->text = response_text;
 	r_block->size = nbytes;
 	r_block->next = NULL;
 
-	struct cache_block *c_block = calloc(1, sizeof(struct cache_block));
+	C_block *c_block = calloc(1, sizeof(C_block));
 	if (c_block == NULL) {
 		perror("Failed to allocate memory for cache block");
 		exit(1);
@@ -205,7 +182,7 @@ add_cache(char *host, char *path, char *reference, long nbytes, int status_no, c
 	strncpy(c_block->host, host, sizeof(c_block->host));
 	strncpy(c_block->path, path, sizeof(c_block->path));
 	c_block->response = r_block;
-	c_block->end = (void*)r_block;
+	c_block->end = r_block;
 	c_block->lru = ++lru_count;
 	c_block->size = nbytes;
 	c_block->status_no = status_no;
@@ -217,23 +194,23 @@ add_cache(char *host, char *path, char *reference, long nbytes, int status_no, c
 	cache_size += nbytes;
 	cache_count++;
 
-	//adding to the start of cache
 	if (cache_start == NULL) {
+		//adding to the start of cache
 		c_block->prev = NULL;
-		cache_start = (void*)c_block;
+		cache_start = c_block;
 	} else {
 		//add to end cache
 		c_block->prev = cache_end;
-		((struct cache_block*)cache_end)->next = (void*)c_block;
+		cache_end->next = c_block;
 	}
-	cache_end = (void*)c_block;
+	cache_end = c_block;
 
 	return c_block;
 }
 
 
 int
-add_response_block(struct cache_block *c_block_ptr, char* response, long nbytes)
+add_response_block(C_block *c_block_ptr, char* response, long nbytes)
 {
 	/*
 	if (!can_fit(nbytes)) {
@@ -241,11 +218,11 @@ add_response_block(struct cache_block *c_block_ptr, char* response, long nbytes)
 	}
 	*/
 
-	printf("adding a block to %s%s\n", c_block_ptr->host, c_block_ptr->path);
-	printf("block length: %ld\n", nbytes);
-	printf("extra block contents: <<%s>>\n", response);
+//	printf("adding a block to %s%s\n", c_block_ptr->host, c_block_ptr->path);
+//	printf("block length: %ld\n", nbytes);
+//	printf("extra block contents: <<%s>>\n", response);
 
-	struct response_block* n_block = calloc(1, sizeof(struct response_block));
+	R_block* n_block = calloc(1, sizeof(R_block));
 	if (n_block == NULL) {
 		perror("Failed to allocate memory for additional response block");
 		exit(1);
@@ -257,12 +234,11 @@ add_response_block(struct cache_block *c_block_ptr, char* response, long nbytes)
 	}
 	memcpy(response_text, response, nbytes);
 
-	n_block->response = response_text;
+	n_block->text = response_text;
 	n_block->size = nbytes;
 	n_block->next = NULL;
 	//add this block to the end of the cache block
-	struct response_block* end = (struct response_block*)(c_block_ptr->end);
-	end->next = n_block;
+	c_block_ptr->end->next = n_block;
 	c_block_ptr->size += nbytes;
 	c_block_ptr->end = n_block;
 	cache_size += nbytes;

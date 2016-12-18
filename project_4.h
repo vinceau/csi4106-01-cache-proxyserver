@@ -60,7 +60,7 @@ send_request(int servconn, struct request req);
 void
 handle_request(struct request req, struct thread_params *p);
 
-struct cache_block*
+struct C_block*
 safe_add_cache(char *host, char *path, char *reference, long nbytes, struct response res);
 
 int
