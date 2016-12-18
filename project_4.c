@@ -22,7 +22,7 @@
 #include "network.h"
 #include "project_4.h"
 
-const char *ERROR_MSG = "HTTP/1.1 403 Forbidden\r\n\r\n";
+const char* ERROR_MSG = "HTTP/1.1 403 Forbidden\r\n\r\n";
 
 int count = 0; //total number of requests
 int thread_count = 0; //total number of running threads
@@ -30,22 +30,22 @@ struct options opt;
 
 sem_t mutex; //semaphore for mutual exclusion
 
-void *cache_start = NULL;
-void *cache_end = NULL;
+void* cache_start = NULL;
+void* cache_end = NULL;
 
 int cache_count = 0;
 long cache_size = 0;
 int lru_count = 0;
 
 
-void *
-search_cache(char *host, char *path)
+void*
+search_cache(char* host, char* path)
 {
-	void *ref_ptr;
+	void* ref_ptr;
 	ref_ptr = cache_start;
 
 	while (ref_ptr != NULL) {
-		struct cache_block *reference;
+		struct cache_block* reference;
 		reference = (struct cache_block*) ref_ptr;
 
 		if (strcmp(reference->host, host) == 0 &&
@@ -77,12 +77,12 @@ remove_cache(long nbytes)
 		return 0;
 	}
 
-	void *ref_ptr;
-	void *prev_ptr = NULL;
-	void *min_prev_ptr = NULL;
+	void* ref_ptr = NULL;
+	void* prev_ptr = NULL;
+	void* min_prev_ptr = NULL;
 
-	struct cache_block *min;
-	struct cache_block *curr_c_block;
+	struct cache_block* min;
+	struct cache_block* curr_c_block;
 
 	//we want to find the item with the lowest LRU and make sure we can
 	//free up at least nbytes worth of space
@@ -147,7 +147,7 @@ sufficient_space(long nbytes)
 }
 
 struct cache_block*
-add_cache(char *host, char *path, char *reference, long nbytes, struct response res)
+add_cache(char* host, char* path, char* reference, long nbytes, struct response res)
 {
 	if (!sufficient_space(nbytes)) {
 		remove_cache(nbytes);
@@ -160,7 +160,7 @@ add_cache(char *host, char *path, char *reference, long nbytes, struct response 
 	}
 	memcpy(response_text, reference, nbytes);
 
-	struct response_block *r_block = calloc(1, sizeof(struct response_block));
+	struct response_block* r_block = calloc(1, sizeof(struct response_block));
 	if (r_block == NULL) {
 		perror("Failed to allocate memory for cache's response block");
 		exit(1);
@@ -169,7 +169,7 @@ add_cache(char *host, char *path, char *reference, long nbytes, struct response 
 	r_block->size = nbytes;
 	r_block->next = NULL;
 
-	struct cache_block *c_block = calloc(1, sizeof(struct cache_block));
+	struct cache_block* c_block = calloc(1, sizeof(struct cache_block));
 	if (c_block == NULL) {
 		perror("Failed to allocate memory for cache block");
 		exit(1);
@@ -211,7 +211,7 @@ add_cache(char *host, char *path, char *reference, long nbytes, struct response 
 
 
 int
-add_response_block(struct cache_block *c_block_ptr, char *response, long nbytes)
+add_response_block(struct cache_block* c_block_ptr, char* response, long nbytes)
 {
 	if (!sufficient_space(nbytes)) {
 		remove_cache(nbytes);
@@ -245,10 +245,10 @@ add_response_block(struct cache_block *c_block_ptr, char *response, long nbytes)
 
 
 void*
-thread_main(void *params)
+thread_main(void* params)
 {
 	/* Cast the pointer to the correct type. */ 
-    struct thread_params *p = (struct thread_params*) params; 
+    struct thread_params* p = (struct thread_params*) params; 
 	pthread_detach(pthread_self());
 
 	char buf[MAX_BUF]; //buffer for messages
@@ -310,7 +310,7 @@ check_cache(char* host, char* path, int connfd, struct timeval* start) {
  * variable <res>. Returns the length of the response header.
  */
 int
-parse_response(char *response, struct response *r_ptr)
+parse_response(char* response, struct response* r_ptr)
 {
 	//printf("\n\nPARSE RESPONSE: <%s>\n\n", response);
 	r_ptr->has_length = 0;
@@ -321,17 +321,17 @@ parse_response(char *response, struct response *r_ptr)
 		return 0;
 	}
 
-	char *token, *string, *tofree;
+	char* token, * string, * tofree;
 	tofree = string = strdup(response);
 	//loop through the request line by line (saved to token)
 	while ((token = strsep(&string, "\r\n")) != NULL) {
 		if (strncmp(token, "Content-Type: ", 14) == 0) {
-			char *type = token + 14;
+			char* type = token + 14;
 			strncpy(r_ptr->c_type, type, sizeof(r_ptr->c_type));
 			r_ptr->has_type = 1;
 		}
 		else if (strncmp(token, "Content-Length: ", 16) == 0) {
-			char *len = token + 16;
+			char* len = token + 16;
 			strncpy(r_ptr->c_length, len, sizeof(r_ptr->c_length));
 			r_ptr->has_length = 1;
 		}
@@ -359,7 +359,7 @@ parse_response(char *response, struct response *r_ptr)
  * Returns 0 if successful, -1 otherwise.
  */
 int
-parse_request(char *request, struct request * rptr)
+parse_request(char* request, struct request* rptr)
 {
 	//printf("\n\nPARSE REQUEST: <%s>\n\n", request);
 	//scan the method and url into the pointer
@@ -371,30 +371,30 @@ parse_request(char *request, struct request * rptr)
 	rptr->has_connection = 0;
 	rptr->has_encoding = 0;
 
-	char *token, *string, *tofree;
+	char* token, * string, * tofree;
 	tofree = string = strdup(request);
 	//loop through the request line by line (saved to token)
 	while ((token = strsep(&string, "\r\n")) != NULL) {
 		if (strncmp(token, "Host: ", 6) == 0) {
-			char *host = token + 6;
+			char* host = token + 6;
 			strncpy(rptr->host, host, sizeof(rptr->host));
 
-			char *path_offset = strstr(rptr->url, host);
+			char* path_offset = strstr(rptr->url, host);
 			path_offset+=strlen(host);
 			strncpy(rptr->path, path_offset, sizeof(rptr->path));
 		}
 		else if (strncmp(token, "Connection: ", 12) == 0) {
-			char *conn = token + 12;
+			char* conn = token + 12;
 			strncpy(rptr->connection, conn, sizeof(rptr->connection));
 			rptr->has_connection = 1;
 		}
 		else if (strncmp(token, "Accept-Encoding: ", 17) == 0) {
-			char *enc = token + 17;
+			char* enc = token + 17;
 			strncpy(rptr->encoding, enc, sizeof(rptr->encoding));
 			rptr->has_encoding= 1;
 		}
 		else if (strncmp(token, "User-Agent: ", 12) == 0) {
-			char *userag = token + 12;
+			char* userag = token + 12;
 			strncpy(rptr->useragent, userag, sizeof(rptr->useragent));
 		}
 		else if (strlen(token) == 0) {
@@ -456,7 +456,7 @@ send_request(int servconn, struct request req)
  * the required bytes.
  */
 void
-handle_request(struct request req, struct thread_params *p)
+handle_request(struct request req, struct thread_params* p)
 {
 	struct timeval start;
 	gettimeofday(&start, NULL);
@@ -482,7 +482,7 @@ handle_request(struct request req, struct thread_params *p)
 		return;
 	}
 
-	char *host = req.host;
+	char* host = req.host;
 	int servconn = connect_host(host);
 
 	printf("################## CACHE MISS ###################\n");
@@ -588,7 +588,7 @@ handle_request(struct request req, struct thread_params *p)
 
 
 int
-main(int argc, char **argv)
+main(int argc, char** argv)
 {
 	//make sure we have the right number of arguments
 	if (argc < 4) {
@@ -599,7 +599,7 @@ main(int argc, char **argv)
 		exit(1);
 	}
 
-	char *port = argv[1]; //port we're listening on
+	char* port = argv[1]; //port we're listening on
 	opt.max_conn = atol(argv[2]); //max no. connections
 	opt.max_size = atol(argv[3]); //max cache size
 
@@ -632,7 +632,7 @@ main(int argc, char **argv)
 
 	while(1) {
 		sin_size = sizeof(their_addr);
-		connfd = accept(listener, (struct sockaddr *) &their_addr,
+		connfd = accept(listener, (struct sockaddr*) &their_addr,
 				&sin_size);
 		if (connfd == -1) {
 			perror("ERROR: accept() failed");
@@ -647,7 +647,7 @@ main(int argc, char **argv)
 		}
 
 		pthread_t thread_id;
-		struct thread_params *params = calloc(1, sizeof(struct thread_params));
+		struct thread_params* params = calloc(1, sizeof(struct thread_params));
 		if (params == NULL) {
 			perror("Couldn't allocate memory for thread parameters");
 			exit(1);
@@ -655,7 +655,7 @@ main(int argc, char **argv)
 		params->connfd = connfd;
 
 		//store the ip address and port into params too
-		getnameinfo((struct sockaddr *)&their_addr, sin_size, params->hoststr,
+		getnameinfo((struct sockaddr* )&their_addr, sin_size, params->hoststr,
 				sizeof(params->hoststr), params->portstr, sizeof(params->portstr),
 				NI_NUMERICHOST | NI_NUMERICSERV);
 

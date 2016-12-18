@@ -40,22 +40,22 @@ struct options {
 };
 
 struct response_block {
-	unsigned char *response;
+	unsigned char* response;
 	long size;
-	void *next; //NULL if complete
+	void* next; //NULL if complete
 };
 
 struct cache_block {
 	char host[2048];
 	char path[2048];
-	struct response_block *response;
+	struct response_block* response;
 	int lru;
 	long size;
 	int status_no;
 	int has_type;
 	char status[256];
 	char c_type[256]; //content type
-	void *next; //NULL
+	void* next; //NULL
 };
 
 struct thread_params {
@@ -65,20 +65,20 @@ struct thread_params {
 };
 
 
-void *
-search_cache(char *host, char *path);
+void*
+search_cache(char* host, char* path);
 
 long
 remove_cache(long nbytes);
 
 struct cache_block*
-add_cache(char *host, char *path, char *reference, long nbytes, struct response res);
+add_cache(char* host, char* path, char* reference, long nbytes, struct response res);
 
 int
-add_response_block(struct cache_block *c_block_ptr, char *response, long nbytes);
+add_response_block(struct cache_block* c_block_ptr, char* response, long nbytes);
 
 void*
-thread_main(void *params);
+thread_main(void* params);
 
 int
 sufficient_space(long nbytes);
@@ -87,16 +87,16 @@ int
 check_cache(char* host, char* path, int connfd, struct timeval* start);
 
 int
-parse_response(char *response, struct response *r_ptr);
+parse_response(char* response, struct response* r_ptr);
 
 int
-parse_request(char *request, struct request * rptr);
+parse_request(char* request, struct request* rptr);
 
 ssize_t
 send_request(int servconn, struct request req);
 
 void
-handle_request(struct request req, struct thread_params *p);
+handle_request(struct request req, struct thread_params* p);
 
 
 #endif
