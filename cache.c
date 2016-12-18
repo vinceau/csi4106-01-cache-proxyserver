@@ -56,10 +56,11 @@ search_cache(char *host, char *path)
 void
 free_response_block(R_block* r)
 {
-	if (r == NULL) return;
-
-	//free_response_block(r->next);
-	free(r);
+	if (r != NULL) {
+		if (r->text != NULL) free(r->text);
+		free_response_block(r->next);
+		free(r);
+	}
 }
 
 long
@@ -140,7 +141,7 @@ free_up(long nbytes)
 
 	long freed_space = 0;
 	while (freed_space < nbytes) {
-		void* lru = find_lru();
+		C_block* lru = find_lru();
 		if (lru == NULL) return 0;
 		free_cache_block(lru);
 	}
@@ -161,14 +162,14 @@ add_cache(char *host, char *path, char *reference, long nbytes, int status_no, c
 	unsigned char* response_text = calloc(1, nbytes+1);
 	if (response_text == NULL) {
 		perror("Failed to allocate memory for response text");
-		exit(1);
+		return NULL;
 	}
 	memcpy(response_text, reference, nbytes);
 
 	R_block* r_block = calloc(1, sizeof(R_block));
 	if (r_block == NULL) {
 		perror("Failed to allocate memory for cache's response block");
-		exit(1);
+		return NULL;
 	}
 	r_block->text = response_text;
 	r_block->size = nbytes;
@@ -177,7 +178,7 @@ add_cache(char *host, char *path, char *reference, long nbytes, int status_no, c
 	C_block *c_block = calloc(1, sizeof(C_block));
 	if (c_block == NULL) {
 		perror("Failed to allocate memory for cache block");
-		exit(1);
+		return NULL;
 	}
 	strncpy(c_block->host, host, sizeof(c_block->host));
 	strncpy(c_block->path, path, sizeof(c_block->path));
@@ -225,12 +226,12 @@ add_response_block(C_block *c_block_ptr, char* response, long nbytes)
 	R_block* n_block = calloc(1, sizeof(R_block));
 	if (n_block == NULL) {
 		perror("Failed to allocate memory for additional response block");
-		exit(1);
+		return 1;
 	}
 	unsigned char* response_text = calloc(1, nbytes+1);
 	if (response_text == NULL) {
 		perror("Failed to allocate memory for response text");
-		exit(1);
+		return 1;
 	}
 	memcpy(response_text, response, nbytes);
 

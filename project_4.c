@@ -83,12 +83,14 @@ safe_add_cache(char* host, char* path, char* res_text, long nbytes, struct respo
 	}
 
 	C_block* block = add_cache(host, path, res_text, nbytes, res.status_no, res.status, res.has_type, res.c_type);
-	printf("################## CACHE ADDED ##################\n");
-	printf("> %s%s %.2fMB @ ", host, path, (float)total_size/BYTESINMB);
-	gettimeofday(&tv, NULL);
-	print_time(&tv);
-	printf("> This file has been added to the cache\n");
-	printf("#################################################\n");
+	if (block != NULL) {
+		printf("################## CACHE ADDED ##################\n");
+		printf("> %s%s %.2fMB @ ", host, path, (float)total_size/BYTESINMB);
+		gettimeofday(&tv, NULL);
+		print_time(&tv);
+		printf("> This file has been added to the cache\n");
+		printf("#################################################\n");
+	}
 
 	return block;
 }
@@ -364,6 +366,7 @@ handle_request(struct request req, struct thread_params* p)
 		printf("> %s\n", res.c_type);
 
 		C_block* c_block;
+		int failed = 0;
 
 		if (res.has_length) {
 
@@ -386,7 +389,7 @@ handle_request(struct request req, struct thread_params* p)
 				//add this to cache too
 				sem_wait(&mutex);
 				if (c_block != NULL) {
-					add_response_block(c_block, buf, nbytes);
+					failed |= add_response_block(c_block, buf, nbytes);
 				}
 				sem_post(&mutex);
 			}
@@ -410,7 +413,7 @@ handle_request(struct request req, struct thread_params* p)
 					//add this to cache too
 					sem_wait(&mutex);
 					if (c_block != NULL) {
-						add_response_block(c_block, buf, nbytes);
+						failed |= add_response_block(c_block, buf, nbytes);
 					}
 					sem_post(&mutex);
 				}
@@ -429,6 +432,12 @@ handle_request(struct request req, struct thread_params* p)
 		printf("> %d %s\n", res.status_no, res.status);
 		printf("> %s\n", res.c_type);
 		printf("# %ldms\n", ms_elapsed(&start, &tv));
+
+		if (failed) {
+			sem_wait(&mutex);
+			free_cache_block(c_block);
+			sem_post(&mutex);
+		}
 	}
 	close(connfd);
 	printf("[CLI disconnected]\n");
