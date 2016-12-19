@@ -4,6 +4,10 @@
 
 #include "time.h"
 
+/*
+ * Print the time specified at address <tv> in the form of
+ * hours:minutes:seconds.milliseconds.
+ */
 void
 print_time(struct timeval* tv)
 {
@@ -12,6 +16,10 @@ print_time(struct timeval* tv)
 	printf("%s.%03d\n", tmbuf, (tv->tv_usec / 1000));
 }
 
+/*
+ * Returns the number of milliseconds between the time <start> and the time
+ * <end>.
+ */
 long
 ms_elapsed(struct timeval* start, struct timeval* end)
 {
