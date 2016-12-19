@@ -1,3 +1,5 @@
+#define _GNU_SOURCE
+
 #include <netdb.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -61,13 +63,6 @@ setup_server(int *listener, char *port)
 			exit(1);
 		}
 
-		//don't crash when writing to closed socket
-		if (setsockopt(*listener, SOL_SOCKET, SO_NOSIGPIPE, &yes,
-					sizeof(yes)) == -1) {
-			perror("ERROR: setsockopt() failed");
-			exit(1);
-		}
-
 		if (bind(*listener, servinfo->ai_addr, servinfo->ai_addrlen) == -1) {
 			perror("ERROR: bind() failed");
 			//keep going to see if we can connect to something else
@@ -125,11 +120,6 @@ connect_host(char *hostname)
 
 		//allow port reuse
 		if (setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) == -1) {
-			perror("ERROR: setsockopt() failed");
-			exit(1);
-		}
-		//don't crash when writing to closed socket
-		if (setsockopt(s, SOL_SOCKET, SO_NOSIGPIPE, &yes, sizeof(yes)) == -1) {
 			perror("ERROR: setsockopt() failed");
 			exit(1);
 		}

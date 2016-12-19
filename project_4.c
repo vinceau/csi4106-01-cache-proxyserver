@@ -13,6 +13,7 @@
 #include <semaphore.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <signal.h>
 #include <string.h>
 #include <sys/time.h>
 #include <netdb.h>
@@ -484,6 +485,9 @@ main(int argc, char** argv)
 			opt.pc_enabled = 1;
 		}
 	}
+
+	//don't crash when writing to a closed socket
+	signal(SIGPIPE, SIG_IGN);
 
 	int connfd;
 	int listener; //file descriptor of listening socket
