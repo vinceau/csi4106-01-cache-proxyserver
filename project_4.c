@@ -142,7 +142,7 @@ void*
 thread_main(void* params)
 {
 	/* Cast the pointer to the correct type. */ 
-    struct thread_params* p = (struct thread_params*) params;
+	struct thread_params* p = (struct thread_params*) params;
 	pthread_detach(pthread_self()); //we are never ever ever getting back together
 
 	char buf[MAX_BUF]; //buffer for messages
