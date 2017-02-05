@@ -512,7 +512,11 @@ main(int argc, char** argv)
 		//don't create a new thread if we already have too many running
 		while (opt.max_conn > 0) {
 			sem_wait(&mutex);
-			if (thread_count < opt.max_conn) break;
+			if (thread_count < opt.max_conn) {
+				//release the semaphore before quitting
+				sem_post(&mutex);
+				break;
+			}
 			sem_post(&mutex);
 		}
 
