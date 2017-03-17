@@ -7,7 +7,7 @@ header-includes:
     - \usepackage{fullpage}
 ---
 
-#Introduction
+# Introduction
 
 This program is a simple cache proxy server that logs all HTTP traffic (not HTTPS) and provides some basic options such as limiting the cache size as well as the number of concurrently running threads. It can handle gzip compressed websites as well as chunked responses. You can compile it using the `make` command or alternatively:
 
@@ -23,7 +23,7 @@ To run the program, execute:
 
 This will serve the proxy server on the address: *<http://127.0.0.1:9001>*, with a maximum of 10 concurrent threads and a 20MB cache size limit.
 
-#How it Works
+# How it Works
 
 ![The cache data structure](images/cache.png)
 
@@ -31,13 +31,13 @@ As you can see in Figure 1, the structure of the cache consists of a double-link
 
 The main thread continues to spin accepting new connections. If a new connection is found, it spawns a thread which handles the request. Mutual exclusion is used between threads to ensure only one thread is accessing the cache at any one time. If the requested site isn't in the cache, it will attempt to allocate sufficient space for it before adding it to the cache. If it is in the cache, it will serve the request straight from the cache.
 
-#Implemented Features
+# Implemented Features
 
 This proxy server can serve responses with chunked encoding however, it will not store them in the cache by default. To enable storing of chunked files in the cache, run the program with the `-chunk` flag.
 
 This server also supports caching of gzip compressed responses. To enable this, run the program with the `-comp` flag. Both the `-chunk` flag and the `-comp` can be used at the same time.
 
-#Performance
+# Performance
 
 Several trials were run with the program on different settings. The key for the different settings are ST for single-threaded (i.e. a thread limit of 1), MT for multi-threaded (unlimited threads), comp meaning compression was enabled, and chunk meaning caching of chunked responses was enabled. The website used to test was *<http://imgur.com>* since it needs to load dozens on dozens of images. In all the tests, the cache size was set to unlimited and each test run 3 times for improved accuracy. The time column is the time taken for the page to load, measured in seconds. While the raw results can be found in the appendix, graph in Figure 2 gives an indication of the results.
 
@@ -45,7 +45,7 @@ Several trials were run with the program on different settings. The key for the 
 
 As expected, the average cache size decreased from 5.48MB in page loads without compression to 4.335MB in page loads with compression enabled, a decrease of over 20%. Also as expected, page loads after the resources have been stored in the cache were faster than the loads with an empty cache. This is most notable in the single-threaded example where the page took roughly 20 seconds to load.
 
-#Things I Learnt
+# Things I Learnt
 
 Despite being significantly more proficient in Python, as a challenge and as a way to improve my C, I decided to complete all these projects in C, despite almost giving up and switching to Python several times.
 
@@ -53,15 +53,15 @@ Completing this project taught me a lot about C. Since a lot of the code could b
 
 I became more comfortable dealing with pointers and memory allocation, as well as debugging programs using `gdb`. Since we were dealing with multi-threaded programming, I also learnt about maintaining mutual exclusion in C.
 
-#Demonstration Video
+# Demonstration Video
 A short video demonstrating the features of this program can be found here: *<http://youtu.be/8ZwFL8uu9AA>*.
 
-#Logging Format
+# Logging Format
 The logging format is identical to that in the project specification. That is, each request shows the current number of active threads, current cache size, maximum cache size, as well as the number of items in the cache. The format also includes host and path information of the requested page as well as its size and the time when the request was made. The only difference between the specified logging format and my own is that I also log when the page requested is larger than the maximum size of the cache. This shows up as a `### CACHE SKIP ###` block.
 
 \newpage
 
-#Appendix
+# Appendix
 
 The following table contains the raw results from the performance trial. Time is measured in seconds. See Performance section for the Settings key.
 
